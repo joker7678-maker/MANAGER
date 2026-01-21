@@ -284,13 +284,11 @@ def update_team(old_name: str, new_name: str, capo: str, tel: str) -> Tuple[bool
     return True, f"Aggiornata: {old_name} → {new_name}"
 
 # =========================
-# CSS (SIDEBAR FIX DEFINITIVO)
+# CSS (SIDEBAR + BOTTONI SPECIALI)
 # =========================
 st.markdown("""
 <style>
 header[data-testid="stHeader"] { background: transparent; border:none; }
-
-/* Background app */
 .stApp { background: linear-gradient(180deg,#e9eef3 0%, #dfe7ee 100%); color:#0b1220; }
 .block-container { padding-top: 1.2rem; padding-bottom: 2rem; }
 
@@ -312,11 +310,9 @@ header[data-testid="stHeader"] { background: transparent; border:none; }
 .pc-badge{ background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.22);
   padding: 10px 14px; border-radius: 999px; font-weight: 800; white-space: nowrap; }
 
-/* Cards */
 .pc-card{ background: #fff; border: 1px solid rgba(15,23,42,.15);
   border-radius: 16px; padding: 18px; box-shadow: 0 8px 22px rgba(2,6,23,.08); margin-bottom: 14px; }
 
-/* Chips */
 .pc-chip{ display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border-radius:999px;
   font-weight:900; font-size:.85rem; border:1px solid rgba(15,23,42,.12); line-height:1; }
 .pc-dot{ width:10px; height:10px; border-radius:999px; background: rgba(255,255,255,.85); border:1px solid rgba(15,23,42,.15); }
@@ -342,31 +338,26 @@ header[data-testid="stHeader"] { background: transparent; border:none; }
   color:white; padding: 14px 16px; border-radius: 14px; font-weight: 900; text-align:center;
   box-shadow: 0 12px 28px rgba(255,77,77,.22); border: 1px solid rgba(255,255,255,.22); margin-bottom: 10px; }
 
-/* ===== SIDEBAR: bella + leggibile ===== */
+/* SIDEBAR */
 section[data-testid="stSidebar"]{
   background: linear-gradient(180deg, #0b1f3a 0%, #071426 100%) !important;
   border-right: 1px solid rgba(255,255,255,.08) !important;
 }
-
 section[data-testid="stSidebar"] h1,
 section[data-testid="stSidebar"] h2,
 section[data-testid="stSidebar"] h3{
   color: #f8fafc !important;
   font-weight: 900 !important;
 }
-
 section[data-testid="stSidebar"] label,
 section[data-testid="stSidebar"] .stCaption,
 section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p{
   color: rgba(248,250,252,.92) !important;
   font-weight: 800 !important;
 }
+section[data-testid="stSidebar"] hr{ border-color: rgba(255,255,255,.12) !important; }
 
-section[data-testid="stSidebar"] hr{
-  border-color: rgba(255,255,255,.12) !important;
-}
-
-/* INPUT (bianchi + testo scuro) */
+/* INPUT sidebar */
 section[data-testid="stSidebar"] input,
 section[data-testid="stSidebar"] textarea{
   background: #ffffff !important;
@@ -391,7 +382,7 @@ section[data-testid="stSidebar"] div[data-baseweb="select"] span{
   font-weight: 800 !important;
 }
 
-/* Dropdown list */
+/* Dropdown menu */
 div[role="listbox"]{
   background: #ffffff !important;
   border: 1px solid rgba(15,23,42,.25) !important;
@@ -400,9 +391,7 @@ div[role="option"]{
   color: #0b1220 !important;
   font-weight: 700 !important;
 }
-div[role="option"]:hover{
-  background: rgba(2,6,23,.06) !important;
-}
+div[role="option"]:hover{ background: rgba(2,6,23,.06) !important; }
 
 /* File uploader */
 section[data-testid="stSidebar"] div[data-testid="stFileUploader"]{
@@ -416,11 +405,7 @@ section[data-testid="stSidebar"] div[data-testid="stFileUploader"] *{
   font-weight: 800 !important;
 }
 
-/* =========================
-   BOTTONI SIDEBAR (TESTO SCURO SEMPRE)
-   ========================= */
-
-/* Bottoni normali (st.button e form_submit_button in sidebar) */
+/* BOTTONI DEFAULT sidebar (testo scuro anche dentro span) */
 section[data-testid="stSidebar"] .stButton > button{
   width: 100% !important;
   background: linear-gradient(180deg, #f1f5f9 0%, #e2e8f0 100%) !important;
@@ -430,22 +415,13 @@ section[data-testid="stSidebar"] .stButton > button{
   font-weight: 950 !important;
   box-shadow: 0 10px 22px rgba(2,6,23,.18) !important;
 }
-
-/* Forza il colore anche su testo interno (span/div) */
 section[data-testid="stSidebar"] .stButton > button *{
   color: #0b1220 !important;
   font-weight: 950 !important;
 }
-
 section[data-testid="stSidebar"] .stButton > button:hover{
   background: #ffffff !important;
-  color: #0b1220 !important;
 }
-section[data-testid="stSidebar"] .stButton > button:hover *{
-  color: #0b1220 !important;
-}
-
-/* Download button (backup json) */
 section[data-testid="stSidebar"] .stDownloadButton > button{
   width: 100% !important;
   background: linear-gradient(180deg, #fde68a 0%, #fbbf24 100%) !important;
@@ -460,11 +436,29 @@ section[data-testid="stSidebar"] .stDownloadButton > button *{
   font-weight: 950 !important;
 }
 
-/* Radio / checkbox in sidebar */
-section[data-testid="stSidebar"] div[role="radiogroup"] *,
-section[data-testid="stSidebar"] .stCheckbox *{
-  color: rgba(248,250,252,.92) !important;
-  font-weight: 800 !important;
+/* BOTTONI SPECIALI: add/salva squadra */
+#btn-add-team + div button{
+  background: linear-gradient(180deg, #93c5fd 0%, #60a5fa 100%) !important;
+  color: #0b1220 !important;
+  font-weight: 950 !important;
+}
+#btn-add-team + div button *{
+  color: #0b1220 !important;
+  font-weight: 950 !important;
+}
+#btn-save-team + div button{
+  background: linear-gradient(180deg, #86efac 0%, #4ade80 100%) !important;
+  color: #0b1220 !important;
+  font-weight: 950 !important;
+}
+#btn-save-team + div button *{
+  color: #0b1220 !important;
+  font-weight: 950 !important;
+}
+#btn-add-team + div button:hover,
+#btn-save-team + div button:hover{
+  filter: brightness(1.04);
+  transform: translateY(-1px);
 }
 </style>
 """, unsafe_allow_html=True)
@@ -512,7 +506,8 @@ with st.sidebar:
             n_sq = st.text_input("Nome squadra", placeholder="Es. Squadra 2 / Alfa / Delta…")
             capo = st.text_input("Nome caposquadra", placeholder="Es. Rossi Mario")
             tel = st.text_input("Telefono caposquadra", placeholder="Es. 3331234567")
-            submitted = st.form_submit_button("AGGIUNGI SQUADRA")
+            st.markdown("<div id='btn-add-team'></div>", unsafe_allow_html=True)
+            submitted = st.form_submit_button("➕ AGGIUNGI SQUADRA")
 
         if submitted:
             nome = (n_sq or "").strip().upper()
@@ -539,6 +534,7 @@ with st.sidebar:
             new_name = st.text_input("Nuovo nome squadra", value=sel)
             new_capo = st.text_input("Caposquadra", value=inf["capo"])
             new_tel = st.text_input("Telefono", value=inf["tel"])
+            st.markdown("<div id='btn-save-team'></div>", unsafe_allow_html=True)
             save = st.form_submit_button("💾 SALVA MODIFICHE")
 
         if save:
@@ -674,7 +670,7 @@ if st.session_state.inbox:
                 st.rerun()
 
 # =========================
-# DATI EVENTO
+# DATI EVENTO + TABS
 # =========================
 st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
 st.subheader("📋 Dati Intervento ed Evento")
@@ -738,8 +734,8 @@ with t_rad:
 with t_rep:
     st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
     st.subheader("📊 Report per Squadra")
-
     df = pd.DataFrame(st.session_state.brogliaccio)
+
     filtro = st.selectbox("Seleziona squadra:", ["TUTTE"] + list(st.session_state.squadre.keys()), index=0)
 
     st.markdown("#### 📞 Rubrica Squadre (Caposquadra / Telefono)")
@@ -855,3 +851,4 @@ if col_m1.button("🧹 CANCELLA TUTTI I DATI"):
 if col_m2.button("💾 SALVA ORA SU DISCO"):
     save_data_to_disk()
     st.success("Salvato.")
+

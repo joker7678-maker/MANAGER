@@ -714,4 +714,5 @@ if col_m1.button("🧹 CANCELLA TUTTI I DATI"):
 if col_m2.button("💾 SALVA ORA SU DISCO"):
     save_data_to_disk()
     st.success("Salvato.")
-ica Report HTML/CSV.")
+st.success("Vai in tab REPORT -> seleziona TUTTE -> (opzionale) spunta la mappa -> Scarica Report HTML/CSV.")
+

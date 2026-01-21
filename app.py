@@ -416,20 +416,36 @@ section[data-testid="stSidebar"] div[data-testid="stFileUploader"] *{
   font-weight: 800 !important;
 }
 
-/* Bottoni sidebar */
+/* =========================
+   BOTTONI SIDEBAR (TESTO SCURO SEMPRE)
+   ========================= */
+
+/* Bottoni normali (st.button e form_submit_button in sidebar) */
 section[data-testid="stSidebar"] .stButton > button{
   width: 100% !important;
   background: linear-gradient(180deg, #f1f5f9 0%, #e2e8f0 100%) !important;
   color: #0b1220 !important;
   border: 1px solid rgba(15,23,42,.18) !important;
   border-radius: 12px !important;
-  font-weight: 900 !important;
+  font-weight: 950 !important;
   box-shadow: 0 10px 22px rgba(2,6,23,.18) !important;
 }
-section[data-testid="stSidebar"] .stButton > button:hover{
-  background: #ffffff !important;
+
+/* Forza il colore anche su testo interno (span/div) */
+section[data-testid="stSidebar"] .stButton > button *{
+  color: #0b1220 !important;
+  font-weight: 950 !important;
 }
 
+section[data-testid="stSidebar"] .stButton > button:hover{
+  background: #ffffff !important;
+  color: #0b1220 !important;
+}
+section[data-testid="stSidebar"] .stButton > button:hover *{
+  color: #0b1220 !important;
+}
+
+/* Download button (backup json) */
 section[data-testid="stSidebar"] .stDownloadButton > button{
   width: 100% !important;
   background: linear-gradient(180deg, #fde68a 0%, #fbbf24 100%) !important;
@@ -438,6 +454,10 @@ section[data-testid="stSidebar"] .stDownloadButton > button{
   border-radius: 12px !important;
   font-weight: 950 !important;
   box-shadow: 0 10px 22px rgba(2,6,23,.18) !important;
+}
+section[data-testid="stSidebar"] .stDownloadButton > button *{
+  color: #0b1220 !important;
+  font-weight: 950 !important;
 }
 
 /* Radio / checkbox in sidebar */

@@ -6,6 +6,9 @@ from streamlit_folium import st_folium
 import os
 import base64
 import json
+import uuid
+import qrcode
+from io import BytesIO
 from typing import Optional, Tuple, Dict, Any
 
 # =========================
@@ -27,32 +30,15 @@ COLORI_STATI = {
 }
 
 # =========================
-# LOGIN (Password)
+# QUERY PARAMS (ACCESSO CAMPO)
 # =========================
-def require_login():
-    pw = st.secrets.get("APP_PASSWORD", None)
-    if not pw:
-        st.warning("⚠️ APP_PASSWORD non impostata in Secrets. Streamlit Cloud → Settings → Secrets")
-        return
-
-    if "auth_ok" not in st.session_state:
-        st.session_state.auth_ok = False
-
-    if st.session_state.auth_ok:
-        return
-
-    st.markdown("### 🔐 Accesso protetto")
-    st.caption("Inserisci la password per entrare nell'app.")
-    p = st.text_input("Password", type="password")
-    if st.button("Entra"):
-        if p == pw:
-            st.session_state.auth_ok = True
-            st.rerun()
-        else:
-            st.error("Password errata.")
-    st.stop()
-
-require_login()
+try:
+    qp = st.query_params
+    qp_mode = (qp.get("mode") or "").strip()
+    qp_team = (qp.get("team") or "").strip().upper()
+    qp_token = (qp.get("token") or "").strip()
+except Exception:
+    qp_mode, qp_team, qp_token = "", "", ""
 
 # =========================
 # UTILS
@@ -92,6 +78,7 @@ def get_squadra_info(nome_sq: str) -> Dict[str, Any]:
         "capo": (info.get("capo") or "").strip(),
         "tel": (info.get("tel") or "").strip(),
         "stato": info.get("stato", "In attesa al COC"),
+        "token": (info.get("token") or "").strip(),
     }
 
 def call_flow_from_row(row: dict) -> Tuple[str, str]:
@@ -163,6 +150,15 @@ def df_for_report(df: pd.DataFrame) -> pd.DataFrame:
     )
     return out
 
+def qr_png_bytes(url: str) -> bytes:
+    qr = qrcode.QRCode(box_size=8, border=2)
+    qr.add_data(url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
 # =========================
 # PERSISTENZA
 # =========================
@@ -170,7 +166,7 @@ def default_state_payload():
     return {
         "brogliaccio": [],
         "inbox": [],
-        "squadre": {"SQUADRA 1": {"stato": "In attesa al COC", "capo": "", "tel": ""}},
+        "squadre": {"SQUADRA 1": {"stato": "In attesa al COC", "capo": "", "tel": "", "token": uuid.uuid4().hex}},
         "pos_mappa": [45.7075, 11.4772],
         "op_name": "",
         "ev_data": datetime.now().date().isoformat(),
@@ -233,6 +229,7 @@ def load_data_from_uploaded_json(file_bytes: bytes):
 if "initialized" not in st.session_state:
     st.session_state.initialized = True
     st.session_state.open_map_event = None
+    st.session_state.last_created_team_qr = None  # <--- QUI salviamo link/qr ultima squadra creata
 
     ok = load_data_from_disk()
     if not ok:
@@ -247,6 +244,55 @@ if "initialized" not in st.session_state:
         st.session_state.ev_nome = d["ev_nome"]
         st.session_state.ev_desc = d["ev_desc"]
         save_data_to_disk()
+
+# Garantisce token per tutte le squadre esistenti
+for s, info in st.session_state.squadre.items():
+    if "token" not in info or not info["token"]:
+        info["token"] = uuid.uuid4().hex
+save_data_to_disk()
+
+# =========================
+# ACCESSO PROTETTO
+# =========================
+def require_login():
+    # Se arriva link "campo" valido, entra SOLO modulo caposquadra, senza password
+    if (
+        qp_mode.lower() == "campo"
+        and qp_team in st.session_state.get("squadre", {})
+        and qp_token
+        and qp_token == st.session_state.squadre[qp_team].get("token")
+    ):
+        st.session_state.auth_ok = False
+        st.session_state.field_ok = True
+        st.session_state.field_team = qp_team
+        return
+
+    # Altrimenti: password obbligatoria
+    pw = st.secrets.get("APP_PASSWORD", None)
+    if not pw:
+        st.warning("⚠️ APP_PASSWORD non impostata in Secrets. Streamlit Cloud → Settings → Secrets")
+        st.stop()
+
+    if "auth_ok" not in st.session_state:
+        st.session_state.auth_ok = False
+    if "field_ok" not in st.session_state:
+        st.session_state.field_ok = False
+
+    if st.session_state.auth_ok:
+        return
+
+    st.markdown("### 🔐 Accesso protetto (SALA OPERATIVA)")
+    st.caption("Inserisci la password per entrare nella console.")
+    p = st.text_input("Password", type="password")
+    if st.button("Entra"):
+        if p == pw:
+            st.session_state.auth_ok = True
+            st.rerun()
+        else:
+            st.error("Password errata.")
+    st.stop()
+
+require_login()
 
 # =========================
 # RINOMINA / MODIFICA SQUADRA
@@ -279,12 +325,14 @@ def update_team(old_name: str, new_name: str, capo: str, tel: str) -> Tuple[bool
 
     st.session_state.squadre[new_name]["capo"] = capo
     st.session_state.squadre[new_name]["tel"] = tel
+    if "token" not in st.session_state.squadre[new_name] or not st.session_state.squadre[new_name]["token"]:
+        st.session_state.squadre[new_name]["token"] = uuid.uuid4().hex
 
     save_data_to_disk()
     return True, f"Aggiornata: {old_name} → {new_name}"
 
 # =========================
-# CSS (SIDEBAR FIX + BOTTONI FORM)
+# CSS
 # =========================
 st.markdown("""
 <style>
@@ -342,31 +390,28 @@ header[data-testid="stHeader"] { background: transparent; border:none; }
   color:white; padding: 14px 16px; border-radius: 14px; font-weight: 900; text-align:center;
   box-shadow: 0 12px 28px rgba(255,77,77,.22); border: 1px solid rgba(255,255,255,.22); margin-bottom: 10px; }
 
-/* ===== SIDEBAR: bella + leggibile ===== */
+/* SIDEBAR */
 section[data-testid="stSidebar"]{
   background: linear-gradient(180deg, #0b1f3a 0%, #071426 100%) !important;
   border-right: 1px solid rgba(255,255,255,.08) !important;
 }
-
 section[data-testid="stSidebar"] h1,
 section[data-testid="stSidebar"] h2,
 section[data-testid="stSidebar"] h3{
   color: #f8fafc !important;
   font-weight: 900 !important;
 }
-
 section[data-testid="stSidebar"] label,
 section[data-testid="stSidebar"] .stCaption,
 section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p{
   color: rgba(248,250,252,.92) !important;
   font-weight: 800 !important;
 }
-
 section[data-testid="stSidebar"] hr{
   border-color: rgba(255,255,255,.12) !important;
 }
 
-/* INPUT (bianchi + testo scuro) */
+/* INPUT sidebar */
 section[data-testid="stSidebar"] input,
 section[data-testid="stSidebar"] textarea{
   background: #ffffff !important;
@@ -380,7 +425,7 @@ section[data-testid="stSidebar"] textarea::placeholder{
   color: rgba(15,23,42,.50) !important;
 }
 
-/* Selectbox */
+/* Select */
 section[data-testid="stSidebar"] div[data-baseweb="select"] > div{
   background: #ffffff !important;
   border: 1px solid rgba(15,23,42,.25) !important;
@@ -389,19 +434,6 @@ section[data-testid="stSidebar"] div[data-baseweb="select"] > div{
 section[data-testid="stSidebar"] div[data-baseweb="select"] span{
   color: #0b1220 !important;
   font-weight: 800 !important;
-}
-
-/* Dropdown list */
-div[role="listbox"]{
-  background: #ffffff !important;
-  border: 1px solid rgba(15,23,42,.25) !important;
-}
-div[role="option"]{
-  color: #0b1220 !important;
-  font-weight: 700 !important;
-}
-div[role="option"]:hover{
-  background: rgba(2,6,23,.06) !important;
 }
 
 /* File uploader */
@@ -416,7 +448,7 @@ section[data-testid="stSidebar"] div[data-testid="stFileUploader"] *{
   font-weight: 800 !important;
 }
 
-/* BOTTONI NORMALI SIDEBAR (st.button) - scuri */
+/* Bottoni in sidebar (st.button) */
 section[data-testid="stSidebar"] .stButton > button{
   width: 100% !important;
   background: linear-gradient(180deg, #0f172a 0%, #111827 100%) !important;
@@ -430,15 +462,8 @@ section[data-testid="stSidebar"] .stButton > button *{
   color: #f8fafc !important;
   font-weight: 950 !important;
 }
-section[data-testid="stSidebar"] .stButton > button:hover{
-  filter: brightness(1.06);
-  transform: translateY(-1px);
-}
-section[data-testid="stSidebar"] .stButton > button:hover *{
-  color: #f8fafc !important;
-}
 
-/* ✅ FIX DEFINITIVO: bottoni dei FORM in sidebar (form_submit_button) */
+/* ✅ bottoni FORM in sidebar (form_submit_button) */
 section[data-testid="stSidebar"] div[data-testid="stFormSubmitButton"] > button{
   width: 100% !important;
   background: linear-gradient(180deg, #0f172a 0%, #111827 100%) !important;
@@ -452,15 +477,8 @@ section[data-testid="stSidebar"] div[data-testid="stFormSubmitButton"] > button 
   color: #f8fafc !important;
   font-weight: 950 !important;
 }
-section[data-testid="stSidebar"] div[data-testid="stFormSubmitButton"] > button:hover{
-  filter: brightness(1.06);
-  transform: translateY(-1px);
-}
-section[data-testid="stSidebar"] div[data-testid="stFormSubmitButton"] > button:hover *{
-  color: #f8fafc !important;
-}
 
-/* Download button (backup JSON) giallo + testo scuro */
+/* Download backup giallo */
 section[data-testid="stSidebar"] .stDownloadButton > button{
   width: 100% !important;
   background: linear-gradient(180deg, #fde68a 0%, #fbbf24 100%) !important;
@@ -474,26 +492,39 @@ section[data-testid="stSidebar"] .stDownloadButton > button *{
   color: #0b1220 !important;
   font-weight: 950 !important;
 }
-
-/* Radio / checkbox in sidebar */
-section[data-testid="stSidebar"] div[role="radiogroup"] *,
-section[data-testid="stSidebar"] .stCheckbox *{
-  color: rgba(248,250,252,.92) !important;
-  font-weight: 800 !important;
-}
 </style>
 """, unsafe_allow_html=True)
 
 # =========================
-# SIDEBAR (backup in fondo)
+# SIDEBAR + QR IMMEDIATO ALLA CREAZIONE
 # =========================
 with st.sidebar:
     st.markdown("## 🛡️ NAVIGAZIONE")
-    ruolo = st.radio("RUOLO ATTIVO:", ["SALA OPERATIVA", "MODULO CAPOSQUADRA"])
+
+    # Se accesso campo: forza modulo campo
+    if st.session_state.get("field_ok"):
+        ruolo = "MODULO CAPOSQUADRA"
+    else:
+        ruolo = st.radio("RUOLO ATTIVO:", ["SALA OPERATIVA", "MODULO CAPOSQUADRA"])
     st.divider()
 
+    # URL base per QR (una volta)
+    if "BASE_URL" not in st.session_state:
+        st.session_state.BASE_URL = ""
+
+    # solo admin
     if ruolo == "SALA OPERATIVA":
+        st.markdown("### 🌐 URL App (per QR)")
+        st.session_state.BASE_URL = st.text_input(
+            "Base URL Streamlit Cloud",
+            value=st.session_state.BASE_URL,
+            placeholder="https://nome-app.streamlit.app",
+            help="Serve per generare i QR. Copia l'URL della tua app pubblicata."
+        )
+
+        st.divider()
         st.markdown("### ➕ CREA SQUADRA")
+
         with st.form("form_add_team", clear_on_submit=True):
             n_sq = st.text_input("Nome squadra", placeholder="Es. Squadra 2 / Alfa / Delta…")
             capo = st.text_input("Nome caposquadra", placeholder="Es. Rossi Mario")
@@ -507,10 +538,51 @@ with st.sidebar:
             elif nome in st.session_state.squadre:
                 st.warning("Esiste già una squadra con questo nome.")
             else:
-                st.session_state.squadre[nome] = {"stato": "In attesa al COC", "capo": (capo or "").strip(), "tel": (tel or "").strip()}
+                token = uuid.uuid4().hex
+                st.session_state.squadre[nome] = {
+                    "stato": "In attesa al COC",
+                    "capo": (capo or "").strip(),
+                    "tel": (tel or "").strip(),
+                    "token": token,
+                }
                 save_data_to_disk()
-                st.success("Squadra creata.")
+
+                # salva quale squadra è stata creata: serve per mostrare QR subito
+                st.session_state.last_created_team_qr = nome
+
+                st.success("✅ Squadra creata!")
                 st.rerun()
+
+        # --- QR dopo creazione squadra ---
+        if st.session_state.get("last_created_team_qr"):
+            sq_new = st.session_state.last_created_team_qr
+            if sq_new in st.session_state.squadre:
+                token = st.session_state.squadre[sq_new].get("token", "")
+                base_url = (st.session_state.BASE_URL or "").strip().rstrip("/")
+
+                st.divider()
+                st.markdown("### 📱 QR Accesso Caposquadra")
+                st.info(f"Squadra appena creata: **{sq_new}**")
+
+                if not base_url.startswith("http"):
+                    st.warning("⚠️ Inserisci l'URL base della tua app sopra per generare il link/QR.")
+                else:
+                    link = f"{base_url}/?mode=campo&team={sq_new}&token={token}"
+                    st.code(link, language="text")
+
+                    png = qr_png_bytes(link)
+                    st.image(png, width=240, caption=f"QR — {sq_new}")
+
+                    st.download_button(
+                        "⬇️ Scarica QR (PNG)",
+                        data=png,
+                        file_name=f"QR_{sq_new.replace(' ', '_')}.png",
+                        mime="image/png",
+                    )
+
+                    if st.button("✅ OK, chiudi box QR"):
+                        st.session_state.last_created_team_qr = None
+                        st.rerun()
 
         st.divider()
         st.markdown("### 🛠️ MODIFICA SQUADRA")
@@ -563,6 +635,7 @@ with st.sidebar:
 # =========================
 logo_data_uri = img_to_base64(LOGO_PATH)
 logo_html = f"<img class='pc-logo' src='{logo_data_uri}' />" if logo_data_uri else ""
+
 st.markdown(
     f"""
 <div class="pc-hero">
@@ -573,7 +646,7 @@ st.markdown(
       <div class="subtitle">Radio Manager Pro · Console Operativa Sala Radio</div>
     </div>
   </div>
-  <div class="pc-badge">📡 {ruolo}</div>
+  <div class="pc-badge">📡 {("MODULO CAPOSQUADRA" if st.session_state.get("field_ok") else ruolo)}</div>
 </div>
 """,
     unsafe_allow_html=True,
@@ -586,7 +659,13 @@ if ruolo == "MODULO CAPOSQUADRA":
     st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
     st.subheader("📱 Modulo da campo")
 
-    sq_c = st.selectbox("TUA SQUADRA:", list(st.session_state.squadre.keys()))
+    # Se accesso via QR: squadra bloccata
+    if st.session_state.get("field_ok"):
+        sq_c = st.session_state.get("field_team")
+        st.info(f"🔒 Accesso campo abilitato per: **{sq_c}**")
+    else:
+        sq_c = st.selectbox("TUA SQUADRA:", list(st.session_state.squadre.keys()))
+
     info_sq = get_squadra_info(sq_c)
     st.markdown(f"**👤 Caposquadra:** {info_sq['capo'] or '—'} &nbsp;&nbsp; | &nbsp;&nbsp; **📞 Tel:** {info_sq['tel'] or '—'}")
 

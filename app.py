@@ -14,7 +14,7 @@ from typing import Optional, Tuple, Dict, Any
 # =========================
 st.set_page_config(page_title="RADIO MANAGER - PROTEZIONE CIVILE THIENE", layout="wide")
 
-DATA_PATH = "data.json"   # file persistente (finché l'istanza resta attiva)
+DATA_PATH = "data.json"
 LOGO_PATH = "logo.png"
 
 COLORI_STATI = {
@@ -28,12 +28,12 @@ COLORI_STATI = {
 }
 
 # =========================
-# LOGIN (password gate)
+# LOGIN (Password)
 # =========================
 def require_login():
     pw = st.secrets.get("APP_PASSWORD", None)
     if not pw:
-        st.warning("⚠️ APP_PASSWORD non impostata in Secrets. Impostala su Streamlit Cloud → Settings → Secrets.")
+        st.warning("⚠️ APP_PASSWORD non impostata in Secrets. Streamlit Cloud → Settings → Secrets")
         return
 
     if "auth_ok" not in st.session_state:
@@ -88,6 +88,14 @@ def chip_stato(stato: str) -> str:
         f"<span class='pc-dot'></span>{stato}</span>"
     )
 
+def get_squadra_info(nome_sq: str) -> Dict[str, Any]:
+    info = st.session_state.squadre.get(nome_sq, {})
+    return {
+        "capo": (info.get("capo") or "").strip(),
+        "tel": (info.get("tel") or "").strip(),
+        "stato": info.get("stato", "In attesa al COC"),
+    }
+
 def call_flow_from_row(row: dict) -> Tuple[str, str]:
     chi = (row.get("chi") or "").strip()
     sq = (row.get("sq") or "").strip()
@@ -99,14 +107,6 @@ def chip_call_flow(row: dict) -> str:
     a, b = call_flow_from_row(row)
     return f"<div class='pc-flow'>📞 <b>{a}</b> <span class='pc-arrow'>➜</span> 🎧 <b>{b}</b></div>"
 
-def get_squadra_info(nome_sq: str) -> Dict[str, Any]:
-    info = st.session_state.squadre.get(nome_sq, {})
-    return {
-        "capo": (info.get("capo") or "").strip(),
-        "tel": (info.get("tel") or "").strip(),
-        "stato": info.get("stato", "In attesa al COC"),
-    }
-
 def build_folium_map_from_df(df: pd.DataFrame, center: list, zoom: int = 13) -> folium.Map:
     m = folium.Map(location=center, zoom_start=zoom)
     ultime_pos = {}
@@ -117,6 +117,7 @@ def build_folium_map_from_df(df: pd.DataFrame, center: list, zoom: int = 13) -> 
             stt = row.get("st")
             if isinstance(pos, list) and len(pos) == 2:
                 ultime_pos[sq] = {"pos": pos, "st": stt}
+
     for sq, info in ultime_pos.items():
         stt = info["st"]
         folium.Marker(
@@ -124,35 +125,48 @@ def build_folium_map_from_df(df: pd.DataFrame, center: list, zoom: int = 13) -> 
             tooltip=f"{sq}: {stt}",
             icon=folium.Icon(color=COLORI_STATI.get(stt, {}).get("color", "blue")),
         ).add_to(m)
+
     return m
 
 def df_for_report(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
+
     out = df.copy()
     out["GPS"] = out["pos"].apply(
         lambda x: f"{x[0]:.4f}, {x[1]:.4f}" if isinstance(x, list) and len(x) == 2 else "OMISSIS"
     )
+
     def _caller_receiver(row):
         chi = (row.get("chi") or "").strip()
         sq = (row.get("sq") or "").strip()
         if chi.upper() == "SALA OPERATIVA":
             return "SALA OPERATIVA", sq if sq else "—"
         return sq if sq else "SQUADRA", "SALA OPERATIVA"
+
     cr = out.apply(_caller_receiver, axis=1, result_type="expand")
     out["CHI CHIAMA"] = cr[0]
     out["CHI RICEVE"] = cr[1]
+
     cols = ["ora", "CHI CHIAMA", "CHI RICEVE", "sq", "st", "mit", "ris", "GPS", "op"]
     for c in cols:
         if c not in out.columns:
             out[c] = ""
+
     out = out[cols].rename(
-        columns={"ora":"ORA","sq":"SQUADRA","st":"STATO","mit":"MESSAGGIO","ris":"RISPOSTA","op":"OPERATORE"}
+        columns={
+            "ora": "ORA",
+            "sq": "SQUADRA",
+            "st": "STATO",
+            "mit": "MESSAGGIO",
+            "ris": "RISPOSTA",
+            "op": "OPERATORE",
+        }
     )
     return out
 
 # =========================
-# PERSISTENZA (save/load)
+# PERSISTENZA
 # =========================
 def default_state_payload():
     return {
@@ -216,16 +230,14 @@ def load_data_from_uploaded_json(file_bytes: bytes):
     save_data_to_disk()
 
 # =========================
-# INIT SESSION STATE (con autoload)
+# INIT SESSION STATE
 # =========================
 if "initialized" not in st.session_state:
     st.session_state.initialized = True
     st.session_state.open_map_event = None
 
-    # prova a caricare da disco
     ok = load_data_from_disk()
     if not ok:
-        # fallback
         d = default_state_payload()
         st.session_state.brogliaccio = d["brogliaccio"]
         st.session_state.inbox = d["inbox"]
@@ -239,7 +251,7 @@ if "initialized" not in st.session_state:
         save_data_to_disk()
 
 # =========================
-# TEAM UPDATE (nome+dati, aggiorna log/inbox)
+# MODIFICA SQUADRA
 # =========================
 def update_team(old_name: str, new_name: str, capo: str, tel: str) -> Tuple[bool, str]:
     old_name = (old_name or "").strip().upper()
@@ -274,13 +286,13 @@ def update_team(old_name: str, new_name: str, capo: str, tel: str) -> Tuple[bool
     return True, f"Aggiornata: {old_name} → {new_name}"
 
 # =========================
-# UI CSS
+# CSS COMPLETO (con fix sidebar leggibile)
 # =========================
-st.markdown(
-    """
+st.markdown("""
 <style>
 header[data-testid="stHeader"] { background: transparent; border:none; }
-section[data-testid="stSidebar"] { background: #0b1f3a; }
+section[data-testid="stSidebar"] { background: #0b1f3a !important; }
+
 .stApp { background: linear-gradient(180deg,#e9eef3 0%, #dfe7ee 100%); color:#0b1220; }
 .block-container { padding-top: 1.2rem; padding-bottom: 2rem; }
 
@@ -339,22 +351,82 @@ div[data-baseweb="input"], div[data-baseweb="select"], div[data-baseweb="textare
   border: 1px solid rgba(15, 23, 42, .18);
   box-shadow: 0 6px 14px rgba(2,6,23,.08);
 }
-section[data-testid="stSidebar"] * { color: #e5e7eb !important; }
-section[data-testid="stSidebar"] hr { border-color: rgba(255,255,255,.15); }
-section[data-testid="stSidebar"] input[type="text"]{
+
+/* --- FIX SIDEBAR LEGGIBILITÀ --- */
+section[data-testid="stSidebar"] *{
+  color: #f8fafc !important;
+}
+section[data-testid="stSidebar"] label,
+section[data-testid="stSidebar"] p,
+section[data-testid="stSidebar"] span,
+section[data-testid="stSidebar"] small,
+section[data-testid="stSidebar"] div{
+  color: #f8fafc !important;
+  font-weight: 700;
+}
+section[data-testid="stSidebar"] input::placeholder{
+  color: rgba(248,250,252,.75) !important;
+}
+section[data-testid="stSidebar"] input,
+section[data-testid="stSidebar"] textarea{
   background: rgba(15, 23, 42, .78) !important;
   color: #ffffff !important;
   border: 1px solid rgba(255,255,255,.28) !important;
   border-radius: 12px !important;
 }
-section[data-testid="stSidebar"] input::placeholder{ color: rgba(229,231,235,.70) !important; }
+section[data-testid="stSidebar"] div[data-baseweb="select"] > div{
+  background: rgba(15, 23, 42, .78) !important;
+  border: 1px solid rgba(255,255,255,.28) !important;
+  border-radius: 12px !important;
+}
+section[data-testid="stSidebar"] div[data-baseweb="select"] span{
+  color: #ffffff !important;
+  font-weight: 800 !important;
+}
+div[role="listbox"]{
+  background: #0b1f3a !important;
+  border: 1px solid rgba(255,255,255,.18) !important;
+}
+div[role="option"]{
+  color: #f8fafc !important;
+}
+div[role="option"]:hover{
+  background: rgba(255,255,255,.10) !important;
+}
+section[data-testid="stSidebar"] .stButton > button{
+  width: 100% !important;
+  background: #e2e8f0 !important;
+  color: #0b1220 !important;
+  border: 1px solid rgba(255,255,255,.25) !important;
+  border-radius: 12px !important;
+  font-weight: 900 !important;
+}
+section[data-testid="stSidebar"] .stButton > button:hover{
+  background: #f1f5f9 !important;
+  color: #0b1220 !important;
+}
+section[data-testid="stSidebar"] .stDownloadButton > button{
+  width: 100% !important;
+  background: #fde68a !important;
+  color: #0b1220 !important;
+  border-radius: 12px !important;
+  font-weight: 900 !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stFileUploader"]{
+  background: rgba(255,255,255,.06) !important;
+  border: 1px dashed rgba(255,255,255,.30) !important;
+  padding: 10px !important;
+  border-radius: 14px !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stFileUploader"] *{
+  color: #f8fafc !important;
+  font-weight: 800 !important;
+}
 </style>
-""",
-    unsafe_allow_html=True,
-)
+""", unsafe_allow_html=True)
 
 # =========================
-# SIDEBAR (con backup/ripristino)
+# SIDEBAR
 # =========================
 with st.sidebar:
     st.markdown("## 🛡️ NAVIGAZIONE")
@@ -373,12 +445,14 @@ with st.sidebar:
         "ev_nome": st.session_state.ev_nome,
         "ev_desc": st.session_state.ev_desc,
     }
+
     st.download_button(
         "⬇️ Scarica BACKUP JSON",
         data=json.dumps(payload_now, ensure_ascii=False, indent=2).encode("utf-8"),
         file_name="backup_radio_manager.json",
         mime="application/json",
     )
+
     up = st.file_uploader("⬆️ Ripristina da backup JSON", type=["json"])
     if up is not None:
         if st.button("🔁 RIPRISTINA ORA"):
@@ -410,19 +484,20 @@ with st.sidebar:
 
         st.divider()
         st.markdown("### 🛠️ MODIFICA SQUADRA")
-        if len(st.session_state.squadre) > 0:
-            sel = st.selectbox("Seleziona squadra:", list(st.session_state.squadre.keys()), key="edit_team_sel")
-            inf = get_squadra_info(sel)
-            with st.form("form_edit_team"):
-                new_name = st.text_input("Nuovo nome squadra", value=sel)
-                new_capo = st.text_input("Caposquadra", value=inf["capo"])
-                new_tel = st.text_input("Telefono", value=inf["tel"])
-                save = st.form_submit_button("💾 SALVA MODIFICHE")
-            if save:
-                ok, msg = update_team(sel, new_name, new_capo, new_tel)
-                (st.success if ok else st.warning)(msg)
-                if ok:
-                    st.rerun()
+        sel = st.selectbox("Seleziona squadra:", list(st.session_state.squadre.keys()), key="edit_team_sel")
+        inf = get_squadra_info(sel)
+
+        with st.form("form_edit_team"):
+            new_name = st.text_input("Nuovo nome squadra", value=sel)
+            new_capo = st.text_input("Caposquadra", value=inf["capo"])
+            new_tel = st.text_input("Telefono", value=inf["tel"])
+            save = st.form_submit_button("💾 SALVA MODIFICHE")
+
+        if save:
+            ok, msg = update_team(sel, new_name, new_capo, new_tel)
+            (st.success if ok else st.warning)(msg)
+            if ok:
+                st.rerun()
 
 # =========================
 # HEADER
@@ -451,6 +526,7 @@ st.markdown(
 if ruolo == "MODULO CAPOSQUADRA":
     st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
     st.subheader("📱 Modulo da campo")
+
     sq_c = st.selectbox("TUA SQUADRA:", list(st.session_state.squadre.keys()))
     info_sq = get_squadra_info(sq_c)
     st.markdown(f"**👤 Caposquadra:** {info_sq['capo'] or '—'} &nbsp;&nbsp; | &nbsp;&nbsp; **📞 Tel:** {info_sq['tel'] or '—'}")
@@ -480,6 +556,7 @@ if ruolo == "MODULO CAPOSQUADRA":
             )
             save_data_to_disk()
             st.success("✅ Inviato!")
+
     st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
 
@@ -506,15 +583,20 @@ c3.markdown(metric_box(COLORI_STATI["Intervento concluso"]["hex"], "✅", "Concl
 c4.markdown(metric_box(COLORI_STATI["Rientrata al Coc"]["hex"], "↩️", "Rientro", st_lista.count("Rientrata al Coc")), unsafe_allow_html=True)
 c5.markdown(metric_box(COLORI_STATI["In attesa al COC"]["hex"], "🏠", "Al COC", st_lista.count("In attesa al COC")), unsafe_allow_html=True)
 
-# --- INBOX APPROVAZIONE ---
+# =========================
+# INBOX APPROVAZIONE
+# =========================
 if st.session_state.inbox:
     st.markdown(f"<div class='pc-alert'>⚠️ RICEVUTI {len(st.session_state.inbox)} AGGIORNAMENTI DA VALIDARE</div>", unsafe_allow_html=True)
+
     for i, data in enumerate(st.session_state.inbox):
         sq_in = data["sq"]
         inf_in = get_squadra_info(sq_in)
+
         with st.expander(f"📥 APPROVAZIONE: {sq_in} ({data['ora']})", expanded=True):
             st.markdown(f"<div class='pc-flow'>📞 <b>{sq_in}</b> <span class='pc-arrow'>➜</span> 🎧 <b>SALA OPERATIVA</b></div>", unsafe_allow_html=True)
             st.markdown(f"**👤 Caposquadra:** {inf_in['capo'] or '—'} &nbsp;&nbsp; | &nbsp;&nbsp; **📞 Tel:** {inf_in['tel'] or '—'}")
+
             st.write(f"**MSG:** {data['msg']}")
             if data["pos"]:
                 st.info(f"📍 GPS acquisito: {data['pos']}")
@@ -529,8 +611,9 @@ if st.session_state.inbox:
                 pref = "[AUTO]" if data["pos"] else "[AUTO-PRIVACY]"
                 st.session_state.brogliaccio.insert(
                     0,
-                    {"ora": data["ora"], "chi": sq_in, "sq": sq_in, "st": st_v, "mit": f"{pref} {data['msg']}",
-                     "ris": "VALIDATO", "op": st.session_state.op_name, "pos": data["pos"], "foto": data["foto"]}
+                    {"ora": data["ora"], "chi": sq_in, "sq": sq_in, "st": st_v,
+                     "mit": f"{pref} {data['msg']}", "ris": "VALIDATO", "op": st.session_state.op_name,
+                     "pos": data["pos"], "foto": data["foto"]}
                 )
                 st.session_state.squadre[sq_in]["stato"] = st_v
                 st.session_state.inbox.pop(i)
@@ -542,14 +625,22 @@ if st.session_state.inbox:
                 save_data_to_disk()
                 st.rerun()
 
-# --- DATI EVENTO ---
+# =========================
+# DATI EVENTO
+# =========================
 st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
 st.subheader("📋 Dati Intervento ed Evento")
 cd1, cd2, cd3, cd4 = st.columns([1, 1, 1, 2])
+
 st.session_state.ev_data = cd1.date_input("DATA", value=st.session_state.ev_data)
-st.session_state.ev_tipo = cd2.selectbox("TIPO INTERVENTO", ["Emergenza", "Esercitazione", "Monitoraggio", "Altro"], index=["Emergenza","Esercitazione","Monitoraggio","Altro"].index(st.session_state.ev_tipo))
+
+tipi = ["Emergenza", "Esercitazione", "Monitoraggio", "Altro"]
+idx_tipo = tipi.index(st.session_state.ev_tipo) if st.session_state.ev_tipo in tipi else 0
+st.session_state.ev_tipo = cd2.selectbox("TIPO INTERVENTO", tipi, index=idx_tipo)
+
 st.session_state.ev_nome = cd3.text_input("NOME EVENTO", value=st.session_state.ev_nome)
 st.session_state.ev_desc = cd4.text_input("DESCRIZIONE DETTAGLIATA", value=st.session_state.ev_desc)
+
 save_data_to_disk()
 st.markdown("</div>", unsafe_allow_html=True)
 
@@ -557,11 +648,13 @@ t_rad, t_rep = st.tabs(["🖥️ SALA RADIO", "📊 REPORT"])
 
 with t_rad:
     l, r = st.columns([1, 1.2])
+
     with l:
         st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
         with st.form("radio_form"):
             st.session_state.op_name = st.text_input("OPERATORE RADIO", value=st.session_state.op_name)
             chi = st.radio("CHI CHIAMA?", ["SALA OPERATIVA", "SQUADRA ESTERNA"])
+
             sq = st.selectbox("SQUADRA", list(st.session_state.squadre.keys()))
             inf = get_squadra_info(sq)
             st.caption(f"👤 Caposquadra: {inf['capo'] or '—'} · 📞 {inf['tel'] or '—'}")
@@ -597,9 +690,9 @@ with t_rad:
 with t_rep:
     st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
     st.subheader("📊 Report per Squadra")
+
     df = pd.DataFrame(st.session_state.brogliaccio)
-    squad_list = list(st.session_state.squadre.keys())
-    filtro = st.selectbox("Seleziona squadra:", ["TUTTE"] + squad_list, index=0)
+    filtro = st.selectbox("Seleziona squadra:", ["TUTTE"] + list(st.session_state.squadre.keys()), index=0)
 
     st.markdown("#### 📞 Rubrica Squadre (Caposquadra / Telefono)")
     rubrica = []
@@ -622,22 +715,21 @@ with t_rep:
 
         st.divider()
         csv = df_f.to_csv(index=False).encode("utf-8")
-        fname_csv = f"brogliaccio_{'tutte' if filtro=='TUTTE' else filtro.lower()}.csv".replace(" ", "_")
-        st.download_button("⬇️ Scarica CSV filtrato", data=csv, file_name=fname_csv, mime="text/csv")
+        st.download_button("⬇️ Scarica CSV filtrato", data=csv, file_name="brogliaccio.csv", mime="text/csv")
 
     st.markdown("</div>", unsafe_allow_html=True)
 
 # =========================
-# REGISTRO EVENTI + MAPPA EVENTO
+# REGISTRO EVENTI + MAPPA
 # =========================
 st.markdown("### 📋 REGISTRO EVENTI")
 
-# pannello mappa evento (uno alla volta)
 if st.session_state.open_map_event is not None:
     idx = st.session_state.open_map_event
     if 0 <= idx < len(st.session_state.brogliaccio):
         row = st.session_state.brogliaccio[idx]
         pos = row.get("pos")
+
         st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
         st.subheader("🗺️ Mappa evento selezionato")
 
@@ -650,11 +742,12 @@ if st.session_state.open_map_event is not None:
             ).add_to(m_ev)
             st_folium(m_ev, width="100%", height=420)
         else:
-            st.info("Questo evento non ha coordinate GPS (OMISSIS).")
+            st.info("Evento senza coordinate GPS (OMISSIS).")
 
         if st.button("❌ CHIUDI MAPPA", key="close_event_map"):
             st.session_state.open_map_event = None
             st.rerun()
+
         st.markdown("</div>", unsafe_allow_html=True)
 
 for i, b in enumerate(st.session_state.brogliaccio):
@@ -689,7 +782,7 @@ for i, b in enumerate(st.session_state.brogliaccio):
             col_b.caption("Coordinate non presenti (OMISSIS).")
 
 # =========================
-# MEMORIA / RESET
+# RESET
 # =========================
 st.divider()
 st.subheader("💾 Gestione Memoria Dati")
@@ -714,5 +807,4 @@ if col_m1.button("🧹 CANCELLA TUTTI I DATI"):
 if col_m2.button("💾 SALVA ORA SU DISCO"):
     save_data_to_disk()
     st.success("Salvato.")
-st.success("Vai in tab REPORT -> seleziona TUTTE -> (opzionale) spunta la mappa -> Scarica Report HTML/CSV.")
 

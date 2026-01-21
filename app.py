@@ -436,30 +436,37 @@ section[data-testid="stSidebar"] .stDownloadButton > button *{
   font-weight: 950 !important;
 }
 
-/* BOTTONI SPECIALI: add/salva squadra */
+/* BOTTONI SPECIALI (SCURI) */
 #btn-add-team + div button{
-  background: linear-gradient(180deg, #93c5fd 0%, #60a5fa 100%) !important;
-  color: #0b1220 !important;
+  background: linear-gradient(180deg, #0f172a 0%, #111827 100%) !important;
+  border: 1px solid rgba(255,255,255,.12) !important;
+  color: #f8fafc !important;
   font-weight: 950 !important;
+  box-shadow: 0 12px 26px rgba(2,6,23,.28) !important;
 }
 #btn-add-team + div button *{
-  color: #0b1220 !important;
+  color: #f8fafc !important;
   font-weight: 950 !important;
 }
+
 #btn-save-team + div button{
-  background: linear-gradient(180deg, #86efac 0%, #4ade80 100%) !important;
-  color: #0b1220 !important;
+  background: linear-gradient(180deg, #064e3b 0%, #065f46 100%) !important;
+  border: 1px solid rgba(255,255,255,.14) !important;
+  color: #f8fafc !important;
   font-weight: 950 !important;
+  box-shadow: 0 12px 26px rgba(2,6,23,.28) !important;
 }
 #btn-save-team + div button *{
-  color: #0b1220 !important;
+  color: #f8fafc !important;
   font-weight: 950 !important;
 }
+
 #btn-add-team + div button:hover,
 #btn-save-team + div button:hover{
-  filter: brightness(1.04);
+  filter: brightness(1.05);
   transform: translateY(-1px);
 }
+
 </style>
 """, unsafe_allow_html=True)
 

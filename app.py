@@ -229,7 +229,8 @@ def load_data_from_uploaded_json(file_bytes: bytes):
 if "initialized" not in st.session_state:
     st.session_state.initialized = True
     st.session_state.open_map_event = None
-    st.session_state.last_created_team_qr = None  # <--- QUI salviamo link/qr ultima squadra creata
+    st.session_state.qr_open_team = None  # squadra di cui mostrare QR nella sidebar
+    st.session_state.BASE_URL = st.session_state.get("BASE_URL", "")
 
     ok = load_data_from_disk()
     if not ok:
@@ -323,6 +324,10 @@ def update_team(old_name: str, new_name: str, capo: str, tel: str) -> Tuple[bool
             if b.get("chi") == old_name:
                 b["chi"] = new_name
 
+        # se avevamo il QR aperto sulla vecchia squadra, spostalo
+        if st.session_state.get("qr_open_team") == old_name:
+            st.session_state.qr_open_team = new_name
+
     st.session_state.squadre[new_name]["capo"] = capo
     st.session_state.squadre[new_name]["tel"] = tel
     if "token" not in st.session_state.squadre[new_name] or not st.session_state.squadre[new_name]["token"]:
@@ -330,6 +335,27 @@ def update_team(old_name: str, new_name: str, capo: str, tel: str) -> Tuple[bool
 
     save_data_to_disk()
     return True, f"Aggiornata: {old_name} → {new_name}"
+
+def regenerate_team_token(team: str) -> None:
+    team = (team or "").strip().upper()
+    if team in st.session_state.squadre:
+        st.session_state.squadre[team]["token"] = uuid.uuid4().hex
+        save_data_to_disk()
+
+def delete_team(team: str) -> Tuple[bool, str]:
+    team = (team or "").strip().upper()
+    if team not in st.session_state.squadre:
+        return False, "Squadra non trovata."
+    if len(st.session_state.squadre) <= 1:
+        return False, "Deve rimanere almeno 1 squadra."
+    del st.session_state.squadre[team]
+    # pulisci inbox di quella squadra
+    st.session_state.inbox = [m for m in st.session_state.inbox if (m.get("sq") or "").strip().upper() != team]
+    # chiudi QR se era aperto
+    if st.session_state.get("qr_open_team") == team:
+        st.session_state.qr_open_team = None
+    save_data_to_disk()
+    return True, f"Squadra eliminata: {team}"
 
 # =========================
 # CSS
@@ -496,7 +522,7 @@ section[data-testid="stSidebar"] .stDownloadButton > button *{
 """, unsafe_allow_html=True)
 
 # =========================
-# SIDEBAR + QR IMMEDIATO ALLA CREAZIONE
+# SIDEBAR: ELENCO SQUADRE + QR + MODIFICHE
 # =========================
 with st.sidebar:
     st.markdown("## 🛡️ NAVIGAZIONE")
@@ -506,25 +532,20 @@ with st.sidebar:
         ruolo = "MODULO CAPOSQUADRA"
     else:
         ruolo = st.radio("RUOLO ATTIVO:", ["SALA OPERATIVA", "MODULO CAPOSQUADRA"])
+
     st.divider()
 
-    # URL base per QR (una volta)
-    if "BASE_URL" not in st.session_state:
-        st.session_state.BASE_URL = ""
-
-    # solo admin
     if ruolo == "SALA OPERATIVA":
         st.markdown("### 🌐 URL App (per QR)")
         st.session_state.BASE_URL = st.text_input(
             "Base URL Streamlit Cloud",
-            value=st.session_state.BASE_URL,
+            value=(st.session_state.get("BASE_URL") or ""),
             placeholder="https://nome-app.streamlit.app",
-            help="Serve per generare i QR. Copia l'URL della tua app pubblicata."
-        )
+            help="Incolla l'URL della tua app pubblicata. Serve per generare i QR."
+        ).strip()
 
         st.divider()
         st.markdown("### ➕ CREA SQUADRA")
-
         with st.form("form_add_team", clear_on_submit=True):
             n_sq = st.text_input("Nome squadra", placeholder="Es. Squadra 2 / Alfa / Delta…")
             capo = st.text_input("Nome caposquadra", placeholder="Es. Rossi Mario")
@@ -546,60 +567,84 @@ with st.sidebar:
                     "token": token,
                 }
                 save_data_to_disk()
-
-                # salva quale squadra è stata creata: serve per mostrare QR subito
-                st.session_state.last_created_team_qr = nome
-
+                # apri subito il QR della nuova squadra
+                st.session_state.qr_open_team = nome
                 st.success("✅ Squadra creata!")
                 st.rerun()
 
-        # --- QR dopo creazione squadra ---
-        if st.session_state.get("last_created_team_qr"):
-            sq_new = st.session_state.last_created_team_qr
-            if sq_new in st.session_state.squadre:
-                token = st.session_state.squadre[sq_new].get("token", "")
-                base_url = (st.session_state.BASE_URL or "").strip().rstrip("/")
+        st.divider()
+        st.markdown("### 📋 ELENCO SQUADRE (modifica / QR)")
+        filtro_sq = st.text_input("Cerca squadra", placeholder="Scrivi per filtrare…").strip().upper()
 
-                st.divider()
-                st.markdown("### 📱 QR Accesso Caposquadra")
-                st.info(f"Squadra appena creata: **{sq_new}**")
+        squadre_sorted = sorted(list(st.session_state.squadre.keys()))
+        if filtro_sq:
+            squadre_sorted = [s for s in squadre_sorted if filtro_sq in s]
 
-                if not base_url.startswith("http"):
-                    st.warning("⚠️ Inserisci l'URL base della tua app sopra per generare il link/QR.")
-                else:
-                    link = f"{base_url}/?mode=campo&team={sq_new}&token={token}"
-                    st.code(link, language="text")
+        for team in squadre_sorted:
+            inf = get_squadra_info(team)
+            with st.expander(f"👥 {team}", expanded=False):
 
-                    png = qr_png_bytes(link)
-                    st.image(png, width=240, caption=f"QR — {sq_new}")
+                # Stato chip (solo informativo in sidebar)
+                st.markdown(chip_stato(inf["stato"]), unsafe_allow_html=True)
 
-                    st.download_button(
-                        "⬇️ Scarica QR (PNG)",
-                        data=png,
-                        file_name=f"QR_{sq_new.replace(' ', '_')}.png",
-                        mime="image/png",
-                    )
+                # Campi modificabili
+                new_name = st.text_input("Nome squadra", value=team, key=f"nm_{team}")
+                new_capo = st.text_input("Caposquadra", value=inf["capo"], key=f"cp_{team}")
+                new_tel = st.text_input("Telefono", value=inf["tel"], key=f"tl_{team}")
 
-                    if st.button("✅ OK, chiudi box QR"):
-                        st.session_state.last_created_team_qr = None
+                col1, col2 = st.columns(2)
+                if col1.button("💾 SALVA", key=f"save_{team}"):
+                    ok, msg = update_team(team, new_name, new_capo, new_tel)
+                    (st.success if ok else st.warning)(msg)
+                    if ok:
                         st.rerun()
 
-        st.divider()
-        st.markdown("### 🛠️ MODIFICA SQUADRA")
-        sel = st.selectbox("Seleziona squadra:", list(st.session_state.squadre.keys()), key="edit_team_sel")
-        inf = get_squadra_info(sel)
+                if col2.button("🧾 MOSTRA QR", key=f"showqr_{team}"):
+                    st.session_state.qr_open_team = team
+                    st.rerun()
 
-        with st.form("form_edit_team"):
-            new_name = st.text_input("Nuovo nome squadra", value=sel)
-            new_capo = st.text_input("Caposquadra", value=inf["capo"])
-            new_tel = st.text_input("Telefono", value=inf["tel"])
-            save = st.form_submit_button("💾 SALVA MODIFICHE")
+                # QR visibile solo per la squadra selezionata
+                if st.session_state.get("qr_open_team") == team:
+                    base_url = (st.session_state.get("BASE_URL") or "").strip().rstrip("/")
+                    token = st.session_state.squadre[team].get("token", "")
 
-        if save:
-            ok, msg = update_team(sel, new_name, new_capo, new_tel)
-            (st.success if ok else st.warning)(msg)
-            if ok:
-                st.rerun()
+                    st.divider()
+                    st.markdown("#### 📱 QR accesso CAPOSQUADRA")
+                    if not base_url.startswith("http"):
+                        st.warning("⚠️ Inserisci sopra l'URL base della tua app (https://… .streamlit.app).")
+                    else:
+                        link = f"{base_url}/?mode=campo&team={team}&token={token}"
+                        st.code(link, language="text")
+
+                        png = qr_png_bytes(link)
+                        st.image(png, width=230)
+
+                        st.download_button(
+                            "⬇️ Scarica QR (PNG)",
+                            data=png,
+                            file_name=f"QR_{team.replace(' ', '_')}.png",
+                            mime="image/png",
+                            key=f"dlqr_{team}",
+                        )
+
+                        colr1, colr2 = st.columns(2)
+                        if colr1.button("♻️ RIGENERA TOKEN", key=f"regen_{team}"):
+                            regenerate_team_token(team)
+                            st.session_state.qr_open_team = team
+                            st.success("Token rigenerato. QR aggiornato.")
+                            st.rerun()
+
+                        if colr2.button("❌ CHIUDI QR", key=f"closeqr_{team}"):
+                            st.session_state.qr_open_team = None
+                            st.rerun()
+
+                st.divider()
+                # Eliminazione con conferma
+                conferma = st.checkbox("Confermo eliminazione squadra", key=f"confdel_{team}")
+                if st.button("🗑️ ELIMINA SQUADRA", key=f"del_{team}", disabled=not conferma):
+                    ok, msg = delete_team(team)
+                    (st.success if ok else st.warning)(msg)
+                    st.rerun()
 
     # Backup / Ripristino in fondo
     st.divider()
@@ -938,6 +983,7 @@ if col_m1.button("🧹 CANCELLA TUTTI I DATI"):
     st.session_state.ev_nome = d["ev_nome"]
     st.session_state.ev_desc = d["ev_desc"]
     st.session_state.open_map_event = None
+    st.session_state.qr_open_team = None
     save_data_to_disk()
     st.success("Tutti i dati sono stati cancellati.")
     st.rerun()

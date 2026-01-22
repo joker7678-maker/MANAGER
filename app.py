@@ -1379,89 +1379,75 @@ with t_rad:
         st_folium(m, width="100%", height=450)
         st.markdown("</div>", unsafe_allow_html=True)
 
-        # ✅ SCHEDA ALFABETO NATO (compatta) sotto la mappa
-        st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
-        st.subheader("🧾 Alfabeto NATO (fonetico)")
-        st.caption("Lettura rapida per comunicazioni radio: lettera + codice fonetico.")
+# ✅ SCHEDA ALFABETO NATO (COMPATTA) sotto la mappa
+st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
+st.subheader("🧾 Alfabeto NATO (fonetico)")
 
-        nato = [
-            ("A", "Alfa"), ("B", "Bravo"), ("C", "Charlie"), ("D", "Delta"), ("E", "Echo"), ("F", "Foxtrot"),
-            ("G", "Golf"), ("H", "Hotel"), ("I", "India"), ("J", "Juliett"), ("K", "Kilo"), ("L", "Lima"),
-            ("M", "Mike"), ("N", "November"), ("O", "Oscar"), ("P", "Papa"), ("Q", "Quebec"), ("R", "Romeo"),
-            ("S", "Sierra"), ("T", "Tango"), ("U", "Uniform"), ("V", "Victor"), ("W", "Whiskey"), ("X", "X-ray"),
-            ("Y", "Yankee"), ("Z", "Zulu"),
-        ]
+st.markdown(
+    """
+    <style>
+      .nato-grid{
+        display:grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 6px;
+        margin-top: 6px;
+      }
+      .nato-chip{
+        display:flex;
+        align-items:center;
+        justify-content:flex-start;
+        gap: 8px;
+        padding: 6px 8px;
+        border-radius: 10px;
+        background: #f4f6f9;
+        border: 1px solid #e2e6ee;
+        line-height: 1.1;
+      }
+      .nato-letter{
+        min-width: 22px;
+        height: 22px;
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        border-radius: 7px;
+        background: #ffffff;
+        border: 1px solid #d8deea;
+        font-weight: 800;
+        font-size: 12px;
+        color:#111;
+      }
+      .nato-code{
+        font-weight: 600;
+        font-size: 12px;
+        color:#111;
+        white-space: nowrap;
+      }
 
-        # griglia "chip" compatta
-        nato_chips = []
-        for letter, code in nato:
-            nato_chips.append(
-                f"""<div class='nato-chip'><span class='nato-letter'>{letter}</span><span class='nato-code'>{code}</span></div>"""
-            )
+      /* più compatto su schermi piccoli */
+      @media (max-width: 1100px){
+        .nato-grid{ grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      }
+      @media (max-width: 800px){
+        .nato-grid{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
-        nato_html = """
-        <style>
-          .nato-grid{
-            display:grid;
-            grid-template-columns: repeat(4, minmax(0, 1fr));
-            gap: 8px;
-            margin-top: 8px;
-          }
-          @media (max-width: 1100px){
-            .nato-grid{ grid-template-columns: repeat(3, minmax(0, 1fr)); }
-          }
-          @media (max-width: 820px){
-            .nato-grid{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
-          }
-          .nato-chip{
-            display:flex;
-            align-items:center;
-            justify-content:flex-start;
-            gap:10px;
-            padding:8px 10px;
-            border:1px solid rgba(0,0,0,.12);
-            border-radius:14px;
-            background: rgba(255,255,255,.85);
-          }
-          .nato-letter{
-            display:inline-flex;
-            align-items:center;
-            justify-content:center;
-            width:32px;
-            height:32px;
-            border-radius:10px;
-            border:1px solid rgba(0,0,0,.14);
-            font-weight:800;
-            font-size: 16px;
-            color:#111;
-            background: rgba(255,255,255,1);
-            flex: 0 0 auto;
-          }
-          .nato-code{
-            font-weight:700;
-            color:#111;
-            letter-spacing:.2px;
-          }
-          .nato-mini{
-            margin-top: 10px;
-            padding: 10px 12px;
-            border-radius: 14px;
-            background: rgba(0,0,0,.03);
-            border: 1px dashed rgba(0,0,0,.18);
-            color:#111;
-          }
-          .nato-mini b{ color:#111; }
-        </style>
-        <div class='nato-grid'>
-        """ + "\n".join(nato_chips) + """
-        </div>
-        <div class='nato-mini'>
-          <b>Esempio:</b> “Thiene” → <b>T</b>ango · <b>H</b>otel · <b>I</b>ndia · <b>E</b>cho · <b>N</b>ovember · <b>E</b>cho
-        </div>
-        """
+nato = [
+    ("A", "Alfa"), ("B", "Bravo"), ("C", "Charlie"), ("D", "Delta"), ("E", "Echo"), ("F", "Foxtrot"),
+    ("G", "Golf"), ("H", "Hotel"), ("I", "India"), ("J", "Juliett"), ("K", "Kilo"), ("L", "Lima"),
+    ("M", "Mike"), ("N", "November"), ("O", "Oscar"), ("P", "Papa"), ("Q", "Quebec"), ("R", "Romeo"),
+    ("S", "Sierra"), ("T", "Tango"), ("U", "Uniform"), ("V", "Victor"), ("W", "Whiskey"), ("X", "X-ray"),
+    ("Y", "Yankee"), ("Z", "Zulu"),
+]
 
-        st.markdown(nato_html, unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
+chips_html = "<div class='nato-grid'>"
+for letter, code in nato:
+    chips_html += (
+        f"<div class='nato-chip'>"
+        f"<span class='
 
 # ✅ HTML REPORT con selettori:
     # - squadra

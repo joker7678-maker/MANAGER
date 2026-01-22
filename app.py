@@ -1505,27 +1505,28 @@ else:
 # ✅ CHIUSURA CARD SEMPRE E COMUNQUE (fuori dagli if!)
 st.markdown("</div>", unsafe_allow_html=True)
 
-    # ✅ HTML REPORT con selettori:
-    # - squadra
-    # - stampa con/senza mappa
-    # - mappa: ultime posizioni / tutti eventi / percorso
+# ✅ HTML REPORT con selettori:
+# - squadra
+# - stampa con/senza mappa
+# - mappa: ultime posizioni / tutti eventi / percorso
 st.divider()
 st.subheader("🖨️ Report HTML (stampa con/senza mappa + selettore mappa eventi squadra)")
 
-    meta = {
-        "ev_data": str(st.session_state.ev_data),
-        "ev_tipo": st.session_state.ev_tipo,
-        "ev_nome": st.session_state.ev_nome,
-        "ev_desc": st.session_state.ev_desc,
-        "op_name": st.session_state.op_name,
-    }
+meta = {
+    "ev_data": str(st.session_state.ev_data),
+    "ev_tipo": st.session_state.ev_tipo,
+    "ev_nome": st.session_state.ev_nome,
+    "ev_desc": st.session_state.ev_desc,
+    "op_name": st.session_state.op_name,
+}
 
-    html_bytes = make_html_report_bytes(
-        squads=st.session_state.squadre,
-        brogliaccio=st.session_state.brogliaccio,
-        center=st.session_state.pos_mappa,
-        meta=meta,
-    )
+html_bytes = make_html_report_bytes(
+    meta=meta,
+    brogliaccio=st.session_state.brogliaccio,
+    squadre=st.session_state.squadre,
+    pos_mappa=st.session_state.pos_mappa,
+)
+
 
     st.download_button(
         "⬇️ Scarica REPORT HTML (mappa stampabile + selettore)",

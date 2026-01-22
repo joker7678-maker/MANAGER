@@ -157,6 +157,288 @@ def qr_png_bytes(url: str) -> bytes:
     buf = BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
+def make_html_report_bytes(
+    squads: Dict[str, Any],
+    brogliaccio: list,
+    center: list,
+    meta: dict,
+) -> bytes:
+    """
+    Crea un HTML completo con:
+    - sezioni per TUTTE + ogni squadra
+    - selettore per scegliere cosa stampare
+    - stampa SOLO della sezione selezionata + mappa
+    """
+    df_all = pd.DataFrame(brogliaccio)
+
+    def _safe(s: str) -> str:
+        return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    def _df_to_html_table(df_view: pd.DataFrame) -> str:
+        if df_view is None or df_view.empty:
+            return "<div class='muted'>Nessun dato presente.</div>"
+        # tabella compatta (no index)
+        return df_view.to_html(index=False, classes="tbl", escape=True)
+
+    def _folium_html_for_df(df: pd.DataFrame) -> str:
+        # mappa con ultime posizioni per squadra (come in app)
+        m = build_folium_map_from_df(df, center=center, zoom=14)
+        return m.get_root().render()
+
+    ev_data = _safe(str(meta.get("ev_data", "")))
+    ev_tipo = _safe(str(meta.get("ev_tipo", "")))
+    ev_nome = _safe(str(meta.get("ev_nome", "")))
+    ev_desc = _safe(str(meta.get("ev_desc", "")))
+    op_name = _safe(str(meta.get("op_name", "")))
+
+    # --- crea sezioni: TUTTE + ciascuna squadra ---
+    sections_html = []
+    options_html = ["<option value='TUTTE'>TUTTE</option>"]
+
+    # TUTTE
+    df_view_tot = df_for_report(df_all) if not df_all.empty else pd.DataFrame()
+    tab_tot = _df_to_html_table(df_view_tot)
+    map_tot = _folium_html_for_df(df_all) if not df_all.empty else "<div class='muted'>Mappa non disponibile.</div>"
+    sections_html.append(f"""
+      <section class="rep" id="rep_TUTTE">
+        <div class="h2">REPORT TOTALE</div>
+        <div class="meta">
+          <span><b>Data:</b> {ev_data}</span>
+          <span><b>Tipo:</b> {ev_tipo}</span>
+          <span><b>Evento:</b> {ev_nome}</span>
+          <span><b>Operatore:</b> {op_name}</span>
+        </div>
+        <div class="desc"><b>Descrizione:</b> {ev_desc}</div>
+        <hr/>
+        <div class="h3">📍 MAPPA</div>
+        <div class="mapwrap">{map_tot}</div>
+        <div class="h3">📋 LOG</div>
+        {tab_tot}
+      </section>
+    """)
+
+    # Ogni squadra
+    for sq in sorted(list(squads.keys())):
+        options_html.append(f"<option value='{_safe(sq)}'>{_safe(sq)}</option>")
+        if df_all.empty:
+            df_sq = pd.DataFrame()
+        else:
+            df_sq = df_all[df_all.get("sq", "") == sq].copy()
+
+        df_view_sq = df_for_report(df_sq) if not df_sq.empty else pd.DataFrame()
+        tab_sq = _df_to_html_table(df_view_sq)
+
+        # mappa solo se c'è almeno una riga con pos
+        has_pos = False
+        if not df_sq.empty and "pos" in df_sq.columns:
+            for p in df_sq["pos"].tolist():
+                if isinstance(p, list) and len(p) == 2:
+                    has_pos = True
+                    break
+
+        map_sq = _folium_html_for_df(df_sq) if (not df_sq.empty and has_pos) else "<div class='muted'>Mappa non disponibile (nessun GPS).</div>"
+
+        capo = _safe((squads.get(sq, {}) or {}).get("capo", "") or "—")
+        tel = _safe((squads.get(sq, {}) or {}).get("tel", "") or "—")
+        stato = _safe((squads.get(sq, {}) or {}).get("stato", "") or "—")
+
+        sections_html.append(f"""
+          <section class="rep" id="rep_{_safe(sq)}">
+            <div class="h2">REPORT SQUADRA: {_safe(sq)}</div>
+            <div class="meta">
+              <span><b>Caposquadra:</b> {capo}</span>
+              <span><b>Telefono:</b> {tel}</span>
+              <span><b>Stato:</b> {stato}</span>
+            </div>
+            <div class="meta">
+              <span><b>Data:</b> {ev_data}</span>
+              <span><b>Tipo:</b> {ev_tipo}</span>
+              <span><b>Evento:</b> {ev_nome}</span>
+              <span><b>Operatore:</b> {op_name}</span>
+            </div>
+            <div class="desc"><b>Descrizione:</b> {ev_desc}</div>
+            <hr/>
+            <div class="h3">📍 MAPPA</div>
+            <div class="mapwrap">{map_sq}</div>
+            <div class="h3">📋 LOG</div>
+            {tab_sq}
+          </section>
+        """)
+
+    # --- HTML finale ---
+    html = f"""<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Report Radio Manager - Protezione Civile Thiene</title>
+
+<style>
+  :root {{
+    --bg: #eef3f7;
+    --card: #ffffff;
+    --ink: #0b1220;
+    --muted: #475569;
+    --pri: #0d47a1;
+    --border: rgba(15,23,42,.15);
+  }}
+  body {{
+    margin:0; font-family: Arial, Helvetica, sans-serif;
+    background: var(--bg); color: var(--ink);
+  }}
+  .wrap {{ max-width: 1200px; margin: 18px auto; padding: 0 14px; }}
+  .top {{
+    background: linear-gradient(135deg, var(--pri), #0b1f3a);
+    color: white; border-radius: 16px; padding: 16px 18px;
+    box-shadow: 0 10px 28px rgba(2,6,23,.12);
+  }}
+  .title {{ font-size: 22px; font-weight: 900; letter-spacing:.5px; text-transform: uppercase; }}
+  .sub {{ opacity:.9; margin-top:4px; font-weight: 700; }}
+  .controls {{
+    margin-top: 12px; background: rgba(255,255,255,.14);
+    border: 1px solid rgba(255,255,255,.18);
+    border-radius: 14px; padding: 12px;
+    display:flex; gap:10px; flex-wrap: wrap; align-items:center;
+  }}
+  label {{ font-weight: 900; }}
+  select {{
+    padding: 10px 12px; border-radius: 12px; border: 1px solid rgba(15,23,42,.2);
+    font-weight: 800; min-width: 240px;
+  }}
+  .btn {{
+    padding: 10px 14px; border-radius: 12px; border: 1px solid rgba(255,255,255,.22);
+    background: #111827; color: white; font-weight: 900; cursor: pointer;
+  }}
+  .btn.secondary {{
+    background: #334155;
+  }}
+
+  .rep {{
+    margin-top: 14px; background: var(--card);
+    border: 1px solid var(--border); border-radius: 16px;
+    padding: 16px; box-shadow: 0 8px 22px rgba(2,6,23,.08);
+    display:none;
+  }}
+  .h2 {{ font-size: 18px; font-weight: 950; color: var(--pri); }}
+  .h3 {{ margin-top: 12px; font-size: 14px; font-weight: 950; }}
+  .meta {{
+    margin-top: 8px;
+    display:flex; gap:14px; flex-wrap: wrap;
+    color: var(--muted); font-weight: 800;
+  }}
+  .desc {{ margin-top: 8px; color: var(--ink); font-weight: 700; }}
+  hr {{ border: none; border-top: 1px solid rgba(15,23,42,.12); margin: 12px 0; }}
+
+  /* Tabella */
+  .tbl {{
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }}
+  .tbl th {{
+    background: var(--pri);
+    color: white;
+    text-align: left;
+    padding: 8px;
+    position: sticky; top: 0;
+  }}
+  .tbl td {{
+    border-top: 1px solid rgba(15,23,42,.10);
+    padding: 7px 8px;
+    vertical-align: top;
+  }}
+  .muted {{ color: var(--muted); font-weight: 800; }}
+
+  /* mappa */
+  .mapwrap {{
+    border: 1px solid rgba(15,23,42,.12);
+    border-radius: 14px;
+    overflow: hidden;
+    background: #fff;
+  }}
+  .mapwrap iframe {{
+    width: 100% !important;
+    height: 420px !important;
+    border: 0 !important;
+  }}
+
+  /* Print: nasconde controlli, stampa SOLO la sezione selezionata */
+  @media print {{
+    body {{ background: white; }}
+    .top .controls {{ display:none !important; }}
+    .wrap {{ max-width: none; margin: 0; padding: 0; }}
+    .rep {{ box-shadow: none; border: none; border-radius: 0; }}
+    .rep {{ display:none; }}
+    .rep.printme {{ display:block !important; }}
+    .tbl th {{ position: static; }}
+    .mapwrap iframe {{ height: 520px !important; }}
+  }}
+</style>
+</head>
+
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div class="title">Protezione Civile Thiene — Report Radio Manager</div>
+      <div class="sub">Seleziona cosa stampare. La stampa include la mappa della sezione scelta.</div>
+
+      <div class="controls">
+        <label for="sel">Seleziona stampa:</label>
+        <select id="sel" onchange="showSection()">
+          {''.join(options_html)}
+        </select>
+        <button class="btn" onclick="doPrint()">🖨️ STAMPA (con mappa)</button>
+        <button class="btn secondary" onclick="showAll()">👁️ Mostra tutto</button>
+      </div>
+    </div>
+
+    {''.join(sections_html)}
+  </div>
+
+<script>
+  function hideAllSections(){{
+    document.querySelectorAll('.rep').forEach(s => {{
+      s.classList.remove('printme');
+      s.style.display = 'none';
+    }});
+  }}
+
+  function showSection(){{
+    const v = document.getElementById('sel').value;
+    hideAllSections();
+    const sec = document.getElementById('rep_' + v);
+    if(sec){{
+      sec.style.display = 'block';
+      sec.classList.add('printme');
+      window.scrollTo(0, sec.offsetTop - 10);
+    }}
+  }}
+
+  function showAll(){{
+    document.querySelectorAll('.rep').forEach(s => {{
+      s.classList.remove('printme');
+      s.style.display = 'block';
+    }});
+    window.scrollTo(0, 0);
+  }}
+
+  function doPrint(){{
+    // forza sezione selezionata (solo quella va in stampa)
+    showSection();
+    window.print();
+  }}
+
+  // default
+  (function init(){{
+    showSection();
+  }})();
+</script>
+
+</body>
+</html>
+"""
+    return html.encode("utf-8")
+
 
 # =========================
 # PERSISTENZA
@@ -939,6 +1221,31 @@ if st.session_state.open_map_event is not None:
             st.rerun()
 
         st.markdown("</div>", unsafe_allow_html=True)
+    st.divider()
+    st.subheader("🖨️ Report HTML con selettore stampa + mappa")
+
+    meta = {
+        "ev_data": str(st.session_state.ev_data),
+        "ev_tipo": st.session_state.ev_tipo,
+        "ev_nome": st.session_state.ev_nome,
+        "ev_desc": st.session_state.ev_desc,
+        "op_name": st.session_state.op_name,
+    }
+
+    html_bytes = make_html_report_bytes(
+        squads=st.session_state.squadre,
+        brogliaccio=st.session_state.brogliaccio,
+        center=st.session_state.pos_mappa,
+        meta=meta,
+    )
+
+    st.download_button(
+        "⬇️ Scarica REPORT HTML (con stampa e mappa)",
+        data=html_bytes,
+        file_name="report_radio_manager.html",
+        mime="text/html",
+    )
+
 
 for i, b in enumerate(st.session_state.brogliaccio):
     gps_ok = isinstance(b.get("pos"), list) and len(b["pos"]) == 2

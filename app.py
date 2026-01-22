@@ -1329,6 +1329,20 @@ with st.sidebar:
           color: #0b1220;
           font-weight: 950;
         }
+        .pc-squad-spacer{ flex: 1 1 auto; }
+        .pc-pencil{
+          width: 32px; height: 32px;
+          display: inline-flex; align-items:center; justify-content:center;
+          border-radius: 12px;
+          background: rgba(255,255,255,.75);
+          border: 1px solid rgba(2,6,23,.14);
+          color: #0b1220;
+          text-decoration: none;
+          font-size: 16px;
+          font-weight: 900;
+        }
+        .pc-pencil:hover{ background: #ffffff; }
+        .pc-pencil:active{ transform: translateY(1px); }
         .pc-squad-item > summary::-webkit-details-marker { display:none; }
         .pc-chev{
           width: 30px; height: 30px;
@@ -1396,6 +1410,8 @@ with st.sidebar:
                       <span class='pc-chev'>›</span>
                       <span class='pc-dot {dot}'></span>
                       <span>{team}</span>
+                      <span class='pc-squad-spacer'></span>
+                      <a class='pc-pencil' href='#gestisci' title='Modifica / QR'>✏️</a>
                     </summary>
                     <div class='pc-squad-body'>
                       <div class='pc-squad-row'><b>Stato:</b> {stato_txt}</div>
@@ -1409,6 +1425,7 @@ with st.sidebar:
         st.markdown("\n".join(html_parts), unsafe_allow_html=True)
 
         st.divider()
+        st.markdown("<div id='gestisci'></div>", unsafe_allow_html=True)
         st.markdown("### ⚙️ Gestisci squadra")
         sel_team = st.selectbox(
             "Seleziona squadra",

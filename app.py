@@ -586,6 +586,40 @@ def make_html_report_bytes(
   }}
 
 
+/* Sidebar - lista squadre in "schede" chiare */
+section[data-testid="stSidebar"] .pc-squad-list div[data-testid="stExpander"]{
+  background: transparent !important;
+  border: none !important;
+}
+section[data-testid="stSidebar"] .pc-squad-list div[data-testid="stExpander"] details{
+  background: #ffffff !important;
+  border: 1px solid rgba(15,23,42,.18) !important;
+  border-radius: 14px !important;
+  margin: 10px 0 !important;
+  overflow: hidden !important;
+  box-shadow: 0 10px 22px rgba(2,6,23,.12) !important;
+}
+section[data-testid="stSidebar"] .pc-squad-list div[data-testid="stExpander"] summary{
+  background: linear-gradient(180deg, #ffffff 0%, #f1f5f9 100%) !important;
+  color: #0b1220 !important;
+  font-weight: 950 !important;
+  padding: 10px 12px !important;
+  border-bottom: 1px solid rgba(15,23,42,.10) !important;
+}
+section[data-testid="stSidebar"] .pc-squad-list div[data-testid="stExpander"] summary svg{
+  fill: #0b1220 !important;
+  color: #0b1220 !important;
+  opacity: 1 !important;
+}
+section[data-testid="stSidebar"] .pc-squad-list div[data-testid="stExpander"] [data-testid="stMarkdownContainer"] p,
+section[data-testid="stSidebar"] .pc-squad-list div[data-testid="stExpander"] label,
+section[data-testid="stSidebar"] .pc-squad-list div[data-testid="stExpander"] span{
+  color: #0b1220 !important;
+}
+section[data-testid="stSidebar"] .pc-squad-list div[data-testid="stExpander"] hr{
+  border-color: rgba(15,23,42,.12) !important;
+}
+
 </style>
 </head>
 
@@ -1181,6 +1215,7 @@ with st.sidebar:
         st.markdown("## 👥 SQUADRE")
         st.caption(f"Totale: **{len(st.session_state.squadre)}**")
 
+        st.markdown("<div class=\'pc-squad-list\'>", unsafe_allow_html=True)
         squadre_sorted = sorted(list(st.session_state.squadre.keys()))
         for team in squadre_sorted:
             inf = get_squadra_info(team)
@@ -1255,6 +1290,8 @@ with st.sidebar:
                     ok, msg = delete_team(team)
                     (st.success if ok else st.warning)(msg)
                     st.rerun()
+
+        st.markdown("</div>", unsafe_allow_html=True)
 
         st.divider()
         st.markdown("## ➕ CREA SQUADRA")

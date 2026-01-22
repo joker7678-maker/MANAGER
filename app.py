@@ -36,6 +36,8 @@ COLORI_STATI = {
     "Rientro in corso": {"color": "orange", "hex": "#ffb74d"},
     "Rientrata al Coc": {"color": "green", "hex": "#81c784"},
 }
+
+
 # =========================
 # NATO – Spelling radio
 # =========================
@@ -581,7 +583,6 @@ def make_html_report_bytes(
     .tbl th {{ position: static; }}
     .no-map .mapblock {{ display:none !important; }}
   }}
-
 </style>
 </head>
 
@@ -1016,43 +1017,14 @@ section[data-testid="stSidebar"] .stDownloadButton > button{
   border-radius: 12px !important;
   font-weight: 950 !important;
 }
+/* NATO mini (solo sala radio) */
+.nato-title{margin-top:10px;font-weight:950;color:#0d47a1;font-size:.9rem;}
+.nato-mini{display:grid;grid-template-columns:repeat(auto-fill,minmax(74px,1fr));gap:6px;margin-top:10px;}
+.nato-chip{background:#f1f5f9;border:1px solid rgba(15,23,42,.15);border-radius:10px;padding:6px;text-align:center;line-height:1.05;}
+.nato-letter{font-size:.92rem;font-weight:950;color:#0d47a1;}
+.nato-word{font-size:.70rem;font-weight:850;color:#334155;}
+@media print{.nato-title,.nato-mini,.nato-spell{display:none!important;}}
 
-/* NATO MINI (sotto mappa) */
-.nato-mini{
-  display:grid;
-  grid-template-columns: repeat(auto-fill, minmax(74px, 1fr));
-  gap:6px;
-  margin-top:10px;
-}
-.nato-chip{
-  background:#f1f5f9;
-  border:1px solid rgba(15,23,42,.15);
-  border-radius:10px;
-  padding:6px 6px;
-  text-align:center;
-  line-height:1.05;
-}
-.nato-letter{
-  font-size:.92rem;
-  font-weight:950;
-  color:#0d47a1;
-}
-.nato-word{
-  font-size:.70rem;
-  font-weight:850;
-  color:#334155;
-}
-.nato-title{
-  margin-top:10px;
-  font-weight:950;
-  color:#0d47a1;
-  font-size:.9rem;
-}
-
-/* NON stampare NATO (solo sala radio) */
-@media print{
-  .nato-title, .nato-mini, .nato-spell{ display:none !important; }
-}
 </style>
 """, unsafe_allow_html=True)
 
@@ -1304,6 +1276,48 @@ c4.markdown(metric_box(COLORI_STATI["Rientrata al Coc"]["hex"], "↩️", "Rient
 c5.markdown(metric_box(COLORI_STATI["In attesa al COC"]["hex"], "🏠", "Al COC", st_lista.count("In attesa al COC")), unsafe_allow_html=True)
 
 # =========================
+# INBOX APPROVAZIONE
+# =========================
+if st.session_state.inbox:
+    st.markdown(f"<div class='pc-alert'>⚠️ RICEVUTI {len(st.session_state.inbox)} AGGIORNAMENTI DA VALIDARE</div>", unsafe_allow_html=True)
+
+    for i, data in enumerate(st.session_state.inbox):
+        sq_in = data["sq"]
+        inf_in = get_squadra_info(sq_in)
+
+        with st.expander(f"📥 APPROVAZIONE: {sq_in} ({data['ora']})", expanded=True):
+            st.markdown(f"<div class='pc-flow'>📞 <b>{sq_in}</b> <span class='pc-arrow'>➜</span> 🎧 <b>SALA OPERATIVA</b></div>", unsafe_allow_html=True)
+            st.markdown(f"**👤 Caposquadra:** {inf_in['capo'] or '—'} &nbsp;&nbsp; | &nbsp;&nbsp; **📞 Tel:** {inf_in['tel'] or '—'}")
+
+            st.write(f"**MSG:** {data['msg']}")
+            if data["pos"]:
+                st.info(f"📍 GPS acquisito: {data['pos']}")
+            if data["foto"]:
+                st.image(data["foto"], width=220)
+
+            st_v = st.selectbox("Nuovo Stato:", list(COLORI_STATI.keys()), key=f"sv_inbox_{i}")
+            st.markdown(chip_stato(st_v), unsafe_allow_html=True)
+
+            cb1, cb2 = st.columns(2)
+            if cb1.button("✅ APPROVA", key=f"ap_{i}"):
+                pref = "[AUTO]" if data["pos"] else "[AUTO-PRIVACY]"
+                st.session_state.brogliaccio.insert(
+                    0,
+                    {"ora": data["ora"], "chi": sq_in, "sq": sq_in, "st": st_v,
+                     "mit": f"{pref} {data['msg']}", "ris": "VALIDATO", "op": st.session_state.op_name,
+                     "pos": data["pos"], "foto": data["foto"]}
+                )
+                st.session_state.squadre[sq_in]["stato"] = st_v
+                st.session_state.inbox.pop(i)
+                save_data_to_disk()
+                st.rerun()
+
+            if cb2.button("🗑️ SCARTA", key=f"sc_{i}"):
+                st.session_state.inbox.pop(i)
+                save_data_to_disk()
+                st.rerun()
+
+# =========================
 # DATI EVENTO
 # =========================
 st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
@@ -1331,170 +1345,126 @@ with t_rad:
     l, r = st.columns([1, 1.2])
 
     with l:
-            st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
-            with st.form("radio_form"):
-                st.session_state.op_name = st.text_input("OPERATORE RADIO", value=st.session_state.op_name)
-                chi = st.radio("CHI CHIAMA?", ["SALA OPERATIVA", "SQUADRA ESTERNA"])
+        st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
+        with st.form("radio_form"):
+            st.session_state.op_name = st.text_input("OPERATORE RADIO", value=st.session_state.op_name)
+            chi = st.radio("CHI CHIAMA?", ["SALA OPERATIVA", "SQUADRA ESTERNA"])
 
-                sq = st.selectbox("SQUADRA", list(st.session_state.squadre.keys()))
-                inf = get_squadra_info(sq)
-                st.caption(f"👤 Caposquadra: {inf['capo'] or '—'} · 📞 {inf['tel'] or '—'}")
+            sq = st.selectbox("SQUADRA", list(st.session_state.squadre.keys()))
+            inf = get_squadra_info(sq)
+            st.caption(f"👤 Caposquadra: {inf['capo'] or '—'} · 📞 {inf['tel'] or '—'}")
 
-                st_s = st.selectbox("STATO", list(COLORI_STATI.keys()))
-                mit = st.text_area("MESSAGGIO")
-                ris = st.text_area("RISPOSTA")
-                st.markdown(chip_stato(st_s), unsafe_allow_html=True)
+            st_s = st.selectbox("STATO", list(COLORI_STATI.keys()))
+            mit = st.text_area("MESSAGGIO")
+            ris = st.text_area("RISPOSTA")
+            st.markdown(chip_stato(st_s), unsafe_allow_html=True)
 
-                c_g1, c_g2 = st.columns(2)
-                lat = c_g1.number_input("LAT", value=float(st.session_state.pos_mappa[0]), format="%.6f")
-                lon = c_g2.number_input("LON", value=float(st.session_state.pos_mappa[1]), format="%.6f")
+            c_g1, c_g2 = st.columns(2)
+            lat = c_g1.number_input("LAT", value=float(st.session_state.pos_mappa[0]), format="%.6f")
+            lon = c_g2.number_input("LON", value=float(st.session_state.pos_mappa[1]), format="%.6f")
 
-                if st.form_submit_button("REGISTRA A LOG"):
-                    st.session_state.brogliaccio.insert(
-                        0,
-                        {"ora": datetime.now().strftime("%H:%M"), "chi": chi, "sq": sq, "st": st_s,
-                         "mit": mit, "ris": ris, "op": st.session_state.op_name, "pos": [lat, lon], "foto": None}
-                    )
-                    st.session_state.squadre[sq]["stato"] = st_s
-                    st.session_state.pos_mappa = [lat, lon]
-                    save_data_to_disk()
-                    st.rerun()
-            st.markdown("</div>", unsafe_allow_html=True)
+            if st.form_submit_button("REGISTRA A LOG"):
+                st.session_state.brogliaccio.insert(
+                    0,
+                    {"ora": datetime.now().strftime("%H:%M"), "chi": chi, "sq": sq, "st": st_s,
+                     "mit": mit, "ris": ris, "op": st.session_state.op_name, "pos": [lat, lon], "foto": None}
+                )
+                st.session_state.squadre[sq]["stato"] = st_s
+                st.session_state.pos_mappa = [lat, lon]
+                save_data_to_disk()
+                st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
 
     with r:
-        # =========================
-        # AVVISI CAPOSQUADRA (SOPRA MAPPA) - CHIUSI
-        # =========================
-        if st.session_state.inbox:
-            st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
-            st.markdown(
-                f"<div class='pc-alert'>⚠️ {len(st.session_state.inbox)} AVVISI DA VALIDARE</div>",
-                unsafe_allow_html=True,
-            )
-
-            for i, data in enumerate(st.session_state.inbox):
-                sq_in = data["sq"]
-                inf_in = get_squadra_info(sq_in)
-
-                with st.expander(f"📥 {sq_in} · {data['ora']}", expanded=False):
-                    st.markdown(
-                        f"<div class='pc-flow'>📞 <b>{sq_in}</b> <span class='pc-arrow'>➜</span> 🎧 <b>SALA OPERATIVA</b></div>",
-                        unsafe_allow_html=True,
-                    )
-                    st.markdown(
-                        f"**👤 Caposquadra:** {inf_in['capo'] or '—'} &nbsp;&nbsp; | &nbsp;&nbsp; **📞 Tel:** {inf_in['tel'] or '—'}"
-                    )
-
-                    st.write(f"**MSG:** {data['msg']}")
-                    if data.get("pos"):
-                        st.info(f"📍 GPS acquisito: {data['pos']}")
-                    if data.get("foto"):
-                        st.image(data["foto"], width=220)
-
-                    st_v = st.selectbox("Nuovo Stato:", list(COLORI_STATI.keys()), key=f"sv_inbox_{i}")
-                    st.markdown(chip_stato(st_v), unsafe_allow_html=True)
-
-                    cb1, cb2 = st.columns(2)
-                    if cb1.button("✅ APPROVA", key=f"ap_{i}"):
-                        pref = "[AUTO]" if data.get("pos") else "[AUTO-PRIVACY]"
-                        st.session_state.brogliaccio.insert(
-                            0,
-                            {
-                                "ora": data["ora"],
-                                "chi": sq_in,
-                                "sq": sq_in,
-                                "st": st_v,
-                                "mit": f"{pref} {data['msg']}",
-                                "ris": "VALIDATO",
-                                "op": st.session_state.op_name,
-                                "pos": data.get("pos"),
-                                "foto": data.get("foto"),
-                            },
-                        )
-                        st.session_state.squadre[sq_in]["stato"] = st_v
-                        st.session_state.inbox.pop(i)
-                        save_data_to_disk()
-                        st.rerun()
-
-                    if cb2.button("🗑️ SCARTA", key=f"sc_{i}"):
-                        st.session_state.inbox.pop(i)
-                        save_data_to_disk()
-                        st.rerun()
-
-            st.markdown("</div>", unsafe_allow_html=True)
-
-        # =========================
-        # MAPPA + NATO (solo sala radio)
-        # =========================
         st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
         df_all = pd.DataFrame(st.session_state.brogliaccio)
         m = build_folium_map_from_df(df_all, center=st.session_state.pos_mappa, zoom=14)
         st_folium(m, width="100%", height=450)
 
-        st.markdown("<div class='nato-title'>📻 Alfabeto NATO – spelling rapido</div>", unsafe_allow_html=True)
-        testo_nato = st.text_input(
-            "Scrivi testo / nominativo / codice",
-            placeholder="Es. DAVIDE 21 / SQUADRA ALFA",
-            key="nato_input",
-        )
+# =========================
+# NATO – Convertitore (solo sala radio)
+# =========================
+st.markdown("<div class='nato-title'>📻 Alfabeto NATO – convertitore</div>", unsafe_allow_html=True)
 
-        def render_nato(txt: str) -> str:
-            out = []
-            for ch in (txt or ""):
-                if ch == " ":
-                    out.append("<span style='opacity:.35;margin:0 6px;'>•</span>")
-                    continue
-                c = ch.upper()
-                if c in NATO:
-                    out.append(
-                        f"<div class='nato-chip nato-spell'>"
-                        f"<div class='nato-letter'>{c}</div>"
-                        f"<div class='nato-word'>{NATO[c]}</div>"
-                        f"</div>"
-                    )
-                elif c.isdigit():
-                    out.append(
-                        f"<div class='nato-chip nato-spell'>"
-                        f"<div class='nato-letter'>{c}</div>"
-                        f"<div class='nato-word'>Numero</div>"
-                        f"</div>"
-                    )
-            return "<div class='nato-mini'>" + "".join(out) + "</div>"
+mode = st.radio(
+    "Modalità:",
+    ["Testo → NATO", "NATO → Frase"],
+    horizontal=True,
+    key="nato_mode",
+)
 
-        if testo_nato.strip():
-            st.markdown(render_nato(testo_nato), unsafe_allow_html=True)
+NATO_REV = {v.upper().replace("-", "").replace(" ", ""): k for k, v in NATO.items()}
+
+def _clean_token(s: str) -> str:
+    return (
+        (s or "")
+        .strip()
+        .upper()
+        .replace(".", "")
+        .replace(",", "")
+        .replace(";", "")
+        .replace(":", "")
+        .replace("|", " ")
+        .replace("/", " ")
+    )
+
+def render_nato_grid_from_text(txt: str) -> str:
+    out = []
+    for ch in (txt or ""):
+        if ch == " ":
+            out.append("<span style='opacity:.35;margin:0 6px;'>•</span>")
+            continue
+        c = ch.upper()
+        if c in NATO:
+            out.append(
+                f"<div class='nato-chip nato-spell'>"
+                f"<div class='nato-letter'>{c}</div>"
+                f"<div class='nato-word'>{NATO[c]}</div>"
+                f"</div>"
+            )
+        elif c.isdigit():
+            out.append(
+                f"<div class='nato-chip nato-spell'>"
+                f"<div class='nato-letter'>{c}</div>"
+                f"<div class='nato-word'>Numero</div>"
+                f"</div>"
+            )
+    return "<div class='nato-mini'>" + "".join(out) + "</div>"
+
+def nato_phrase_to_text(nato_phrase: str) -> str:
+    s = _clean_token(nato_phrase)
+    tokens = [t for t in s.split() if t]
+    out_chars = []
+    for t in tokens:
+        key = t.replace("-", "").replace(" ", "")
+        if key.isdigit():
+            out_chars.append(key)
+            continue
+        letter = NATO_REV.get(key)
+        if letter:
+            out_chars.append(letter)
         else:
-            st.markdown("""
-    <div class="nato-mini">
-      <div class="nato-chip"><div class="nato-letter">A</div><div class="nato-word">Alfa</div></div>
-      <div class="nato-chip"><div class="nato-letter">B</div><div class="nato-word">Bravo</div></div>
-      <div class="nato-chip"><div class="nato-letter">C</div><div class="nato-word">Charlie</div></div>
-      <div class="nato-chip"><div class="nato-letter">D</div><div class="nato-word">Delta</div></div>
-      <div class="nato-chip"><div class="nato-letter">E</div><div class="nato-word">Echo</div></div>
-      <div class="nato-chip"><div class="nato-letter">F</div><div class="nato-word">Foxtrot</div></div>
-      <div class="nato-chip"><div class="nato-letter">G</div><div class="nato-word">Golf</div></div>
-      <div class="nato-chip"><div class="nato-letter">H</div><div class="nato-word">Hotel</div></div>
-      <div class="nato-chip"><div class="nato-letter">I</div><div class="nato-word">India</div></div>
-      <div class="nato-chip"><div class="nato-letter">J</div><div class="nato-word">Juliett</div></div>
-      <div class="nato-chip"><div class="nato-letter">K</div><div class="nato-word">Kilo</div></div>
-      <div class="nato-chip"><div class="nato-letter">L</div><div class="nato-word">Lima</div></div>
-      <div class="nato-chip"><div class="nato-letter">M</div><div class="nato-word">Mike</div></div>
-      <div class="nato-chip"><div class="nato-letter">N</div><div class="nato-word">November</div></div>
-      <div class="nato-chip"><div class="nato-letter">O</div><div class="nato-word">Oscar</div></div>
-      <div class="nato-chip"><div class="nato-letter">P</div><div class="nato-word">Papa</div></div>
-      <div class="nato-chip"><div class="nato-letter">Q</div><div class="nato-word">Quebec</div></div>
-      <div class="nato-chip"><div class="nato-letter">R</div><div class="nato-word">Romeo</div></div>
-      <div class="nato-chip"><div class="nato-letter">S</div><div class="nato-word">Sierra</div></div>
-      <div class="nato-chip"><div class="nato-letter">T</div><div class="nato-word">Tango</div></div>
-      <div class="nato-chip"><div class="nato-letter">U</div><div class="nato-word">Uniform</div></div>
-      <div class="nato-chip"><div class="nato-letter">V</div><div class="nato-word">Victor</div></div>
-      <div class="nato-chip"><div class="nato-letter">W</div><div class="nato-word">Whiskey</div></div>
-      <div class="nato-chip"><div class="nato-letter">X</div><div class="nato-word">X-ray</div></div>
-      <div class="nato-chip"><div class="nato-letter">Y</div><div class="nato-word">Yankee</div></div>
-      <div class="nato-chip"><div class="nato-letter">Z</div><div class="nato-word">Zulu</div></div>
-    </div>
-    """, unsafe_allow_html=True)
+            out_chars.append(key[:1])
+    return "".join(out_chars)
 
+if mode == "Testo → NATO":
+    testo_nato = st.text_input(
+        "Scrivi testo / nominativo / codice",
+        placeholder="Es. DAVIDE 21 / SQUADRA ALFA",
+        key="nato_input_text",
+    )
+    if testo_nato.strip():
+        st.markdown(render_nato_grid_from_text(testo_nato), unsafe_allow_html=True)
+else:
+    nato_in = st.text_input(
+        "Scrivi le parole NATO",
+        placeholder="Es. Delta Alfa Victor India Delta Echo",
+        key="nato_input_nato",
+    )
+    if nato_in.strip():
+        out = nato_phrase_to_text(nato_in)
+        st.success(f"✅ Frase: **{out}**")
+        st.caption("Puoi separare con spazi, | oppure / (es. Delta|Alfa|Victor).")
         st.markdown("</div>", unsafe_allow_html=True)
 
 with t_rep:

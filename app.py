@@ -157,18 +157,13 @@ def qr_png_bytes(url: str) -> bytes:
     buf = BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
+
 def make_html_report_bytes(
     squads: Dict[str, Any],
     brogliaccio: list,
     center: list,
     meta: dict,
 ) -> bytes:
-    """
-    Crea un HTML completo con:
-    - sezioni per TUTTE + ogni squadra
-    - selettore per scegliere cosa stampare
-    - stampa SOLO della sezione selezionata + mappa
-    """
     df_all = pd.DataFrame(brogliaccio)
 
     def _safe(s: str) -> str:
@@ -177,11 +172,9 @@ def make_html_report_bytes(
     def _df_to_html_table(df_view: pd.DataFrame) -> str:
         if df_view is None or df_view.empty:
             return "<div class='muted'>Nessun dato presente.</div>"
-        # tabella compatta (no index)
         return df_view.to_html(index=False, classes="tbl", escape=True)
 
     def _folium_html_for_df(df: pd.DataFrame) -> str:
-        # mappa con ultime posizioni per squadra (come in app)
         m = build_folium_map_from_df(df, center=center, zoom=14)
         return m.get_root().render()
 
@@ -191,14 +184,13 @@ def make_html_report_bytes(
     ev_desc = _safe(str(meta.get("ev_desc", "")))
     op_name = _safe(str(meta.get("op_name", "")))
 
-    # --- crea sezioni: TUTTE + ciascuna squadra ---
     sections_html = []
     options_html = ["<option value='TUTTE'>TUTTE</option>"]
 
-    # TUTTE
     df_view_tot = df_for_report(df_all) if not df_all.empty else pd.DataFrame()
     tab_tot = _df_to_html_table(df_view_tot)
     map_tot = _folium_html_for_df(df_all) if not df_all.empty else "<div class='muted'>Mappa non disponibile.</div>"
+
     sections_html.append(f"""
       <section class="rep" id="rep_TUTTE">
         <div class="h2">REPORT TOTALE</div>
@@ -217,7 +209,6 @@ def make_html_report_bytes(
       </section>
     """)
 
-    # Ogni squadra
     for sq in sorted(list(squads.keys())):
         options_html.append(f"<option value='{_safe(sq)}'>{_safe(sq)}</option>")
         if df_all.empty:
@@ -228,7 +219,6 @@ def make_html_report_bytes(
         df_view_sq = df_for_report(df_sq) if not df_sq.empty else pd.DataFrame()
         tab_sq = _df_to_html_table(df_view_sq)
 
-        # mappa solo se c'è almeno una riga con pos
         has_pos = False
         if not df_sq.empty and "pos" in df_sq.columns:
             for p in df_sq["pos"].tolist():
@@ -265,7 +255,6 @@ def make_html_report_bytes(
           </section>
         """)
 
-    # --- HTML finale ---
     html = f"""<!doctype html>
 <html lang="it">
 <head>
@@ -329,7 +318,6 @@ def make_html_report_bytes(
   .desc {{ margin-top: 8px; color: var(--ink); font-weight: 700; }}
   hr {{ border: none; border-top: 1px solid rgba(15,23,42,.12); margin: 12px 0; }}
 
-  /* Tabella */
   .tbl {{
     width: 100%;
     border-collapse: collapse;
@@ -349,7 +337,6 @@ def make_html_report_bytes(
   }}
   .muted {{ color: var(--muted); font-weight: 800; }}
 
-  /* mappa */
   .mapwrap {{
     border: 1px solid rgba(15,23,42,.12);
     border-radius: 14px;
@@ -362,7 +349,6 @@ def make_html_report_bytes(
     border: 0 !important;
   }}
 
-  /* Print: nasconde controlli, stampa SOLO la sezione selezionata */
   @media print {{
     body {{ background: white; }}
     .top .controls {{ display:none !important; }}
@@ -423,12 +409,10 @@ def make_html_report_bytes(
   }}
 
   function doPrint(){{
-    // forza sezione selezionata (solo quella va in stampa)
     showSection();
     window.print();
   }}
 
-  // default
   (function init(){{
     showSection();
   }})();
@@ -438,7 +422,6 @@ def make_html_report_bytes(
 </html>
 """
     return html.encode("utf-8")
-
 
 # =========================
 # PERSISTENZA
@@ -510,8 +493,6 @@ def load_data_from_uploaded_json(file_bytes: bytes):
 if "initialized" not in st.session_state:
     st.session_state.initialized = True
     st.session_state.open_map_event = None
-
-    # UI sidebar
     st.session_state.team_edit_open = None
     st.session_state.team_qr_open = None
     st.session_state.BASE_URL = st.session_state.get("BASE_URL", "")
@@ -530,7 +511,6 @@ if "initialized" not in st.session_state:
         st.session_state.ev_desc = d["ev_desc"]
         save_data_to_disk()
 
-# Garantisce token per tutte le squadre esistenti
 for s, info in st.session_state.squadre.items():
     if "token" not in info or not info["token"]:
         info["token"] = uuid.uuid4().hex
@@ -603,7 +583,6 @@ def delete_team(team: str) -> Tuple[bool, str]:
 # ACCESSO PROTETTO
 # =========================
 def require_login():
-    # Se arriva link "campo" valido, entra SOLO modulo caposquadra, senza password
     if (
         qp_mode.lower() == "campo"
         and qp_team in st.session_state.get("squadre", {})
@@ -642,17 +621,14 @@ def require_login():
 require_login()
 
 # =========================
-# CSS (sidebar più chiara + bottoni meno scuri, testo sempre leggibile)
+# CSS
 # =========================
 st.markdown("""
 <style>
 header[data-testid="stHeader"] { background: transparent; border:none; }
-
-/* Background app */
 .stApp { background: linear-gradient(180deg,#e9eef3 0%, #dfe7ee 100%); color:#0b1220; }
 .block-container { padding-top: 1.2rem; padding-bottom: 2rem; }
 
-/* HERO */
 .pc-hero{
   background: radial-gradient(1200px 300px at 50% 0%, rgba(255,255,255,.18), rgba(255,255,255,0)),
               linear-gradient(135deg, #0d47a1 0%, #0b1f3a 80%);
@@ -669,16 +645,11 @@ header[data-testid="stHeader"] { background: transparent; border:none; }
   border: 1px solid rgba(255,255,255,.22); padding: 6px; object-fit: contain; }
 .pc-badge{ background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.22);
   padding: 10px 14px; border-radius: 999px; font-weight: 800; white-space: nowrap; }
-
-/* Cards */
 .pc-card{ background: #fff; border: 1px solid rgba(15,23,42,.15);
   border-radius: 16px; padding: 18px; box-shadow: 0 8px 22px rgba(2,6,23,.08); margin-bottom: 14px; }
-
-/* Chips */
 .pc-chip{ display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border-radius:999px;
   font-weight:900; font-size:.85rem; border:1px solid rgba(15,23,42,.12); line-height:1; }
 .pc-dot{ width:10px; height:10px; border-radius:999px; background: rgba(255,255,255,.85); border:1px solid rgba(15,23,42,.15); }
-
 .pc-flow{
   background: linear-gradient(90deg, #fff7cc 0%, #dbeafe 100%);
   border: 1px solid rgba(15,23,42,.12);
@@ -691,16 +662,13 @@ header[data-testid="stHeader"] { background: transparent; border:none; }
   box-shadow: 0 8px 18px rgba(2,6,23,.08);
 }
 .pc-arrow{ margin: 0 10px; opacity: .9; }
-
 .pc-metric-color{ border-radius: 16px; padding: 14px; border: 1px solid rgba(15,23,42,.12); box-shadow: 0 8px 22px rgba(2,6,23,.10); }
 .pc-metric-color .k{ font-size:.85rem; font-weight: 900; text-transform: uppercase; letter-spacing: .8px; opacity: .95; }
 .pc-metric-color .v{ font-size: 2.1rem; font-weight: 950; margin-top: 2px; }
-
 .pc-alert{ background: linear-gradient(135deg, #ff4d4d 0%, #ff7a59 100%);
   color:white; padding: 14px 16px; border-radius: 14px; font-weight: 900; text-align:center;
   box-shadow: 0 12px 28px rgba(255,77,77,.22); border: 1px solid rgba(255,255,255,.22); margin-bottom: 10px; }
 
-/* ===== SIDEBAR più chiara ===== */
 section[data-testid="stSidebar"]{
   background: linear-gradient(180deg, #123356 0%, #0b2542 100%) !important;
   border-right: 1px solid rgba(255,255,255,.10) !important;
@@ -717,11 +685,7 @@ section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p{
   color: rgba(248,250,252,.95) !important;
   font-weight: 800 !important;
 }
-section[data-testid="stSidebar"] hr{
-  border-color: rgba(255,255,255,.14) !important;
-}
-
-/* INPUT sidebar */
+section[data-testid="stSidebar"] hr{ border-color: rgba(255,255,255,.14) !important; }
 section[data-testid="stSidebar"] input,
 section[data-testid="stSidebar"] textarea{
   background: #ffffff !important;
@@ -730,12 +694,6 @@ section[data-testid="stSidebar"] textarea{
   border-radius: 12px !important;
   font-weight: 800 !important;
 }
-section[data-testid="stSidebar"] input::placeholder,
-section[data-testid="stSidebar"] textarea::placeholder{
-  color: rgba(15,23,42,.55) !important;
-}
-
-/* Select */
 section[data-testid="stSidebar"] div[data-baseweb="select"] > div{
   background: #ffffff !important;
   border: 1px solid rgba(15,23,42,.22) !important;
@@ -745,20 +703,6 @@ section[data-testid="stSidebar"] div[data-baseweb="select"] span{
   color: #0b1220 !important;
   font-weight: 900 !important;
 }
-
-/* File uploader */
-section[data-testid="stSidebar"] div[data-testid="stFileUploader"]{
-  background: #ffffff !important;
-  border: 1px dashed rgba(15,23,42,.32) !important;
-  padding: 10px !important;
-  border-radius: 14px !important;
-}
-section[data-testid="stSidebar"] div[data-testid="stFileUploader"] *{
-  color: #0b1220 !important;
-  font-weight: 900 !important;
-}
-
-/* Bottoni sidebar: meno scuri (leggibili) */
 section[data-testid="stSidebar"] .stButton > button,
 section[data-testid="stSidebar"] div[data-testid="stFormSubmitButton"] > button{
   width: 100% !important;
@@ -767,15 +711,7 @@ section[data-testid="stSidebar"] div[data-testid="stFormSubmitButton"] > button{
   border: 1px solid rgba(255,255,255,.18) !important;
   border-radius: 12px !important;
   font-weight: 950 !important;
-  box-shadow: 0 10px 22px rgba(2,6,23,.20) !important;
 }
-section[data-testid="stSidebar"] .stButton > button * ,
-section[data-testid="stSidebar"] div[data-testid="stFormSubmitButton"] > button *{
-  color: #ffffff !important;
-  font-weight: 950 !important;
-}
-
-/* Download backup giallo */
 section[data-testid="stSidebar"] .stDownloadButton > button{
   width: 100% !important;
   background: linear-gradient(180deg, #fde68a 0%, #fbbf24 100%) !important;
@@ -783,17 +719,12 @@ section[data-testid="stSidebar"] .stDownloadButton > button{
   border: 1px solid rgba(15,23,42,.18) !important;
   border-radius: 12px !important;
   font-weight: 950 !important;
-  box-shadow: 0 10px 22px rgba(2,6,23,.18) !important;
-}
-section[data-testid="stSidebar"] .stDownloadButton > button *{
-  color: #0b1220 !important;
-  font-weight: 950 !important;
 }
 </style>
 """, unsafe_allow_html=True)
 
 # =========================
-# SIDEBAR (senza "Cerca squadra")
+# SIDEBAR
 # =========================
 with st.sidebar:
     st.markdown("## 🛡️ NAVIGAZIONE")
@@ -806,12 +737,10 @@ with st.sidebar:
     st.divider()
 
     if ruolo == "SALA OPERATIVA":
-        # --- SQUADRE IN ALTO ---
         st.markdown("## 👥 SQUADRE")
         st.caption(f"Totale: **{len(st.session_state.squadre)}**")
 
         squadre_sorted = sorted(list(st.session_state.squadre.keys()))
-
         for team in squadre_sorted:
             inf = get_squadra_info(team)
             capo_txt = inf["capo"] if inf["capo"] else "—"
@@ -827,53 +756,44 @@ with st.sidebar:
                     st.session_state.team_edit_open = team
                     st.session_state.team_qr_open = None
                     st.rerun()
-
                 if b2.button("📱 QR", key=f"btn_qr_{team}"):
                     st.session_state.team_qr_open = team
                     st.session_state.team_edit_open = None
                     st.rerun()
 
-                # MODIFICA
                 if st.session_state.get("team_edit_open") == team:
                     st.divider()
                     st.markdown("### ✏️ Modifica squadra")
-
                     with st.form(f"form_edit_{team}"):
                         new_name = st.text_input("Nome squadra", value=team)
                         new_capo = st.text_input("Caposquadra", value=inf["capo"])
                         new_tel = st.text_input("Telefono", value=inf["tel"])
                         save = st.form_submit_button("💾 SALVA MODIFICHE")
-
                     if save:
                         ok, msg = update_team(team, new_name, new_capo, new_tel)
                         (st.success if ok else st.warning)(msg)
                         if ok:
                             st.session_state.team_edit_open = None
                             st.rerun()
-
                     st.caption("Se il QR è stato condiviso per errore, rigenera il token.")
                     if st.button("♻️ Rigenera Token", key=f"regen_{team}"):
                         regenerate_team_token(team)
                         st.success("Token rigenerato ✅")
                         st.rerun()
 
-                # QR
                 if st.session_state.get("team_qr_open") == team:
                     st.divider()
                     st.markdown("### 📱 QR accesso caposquadra")
-
                     base_url = (st.session_state.get("BASE_URL") or "").strip().rstrip("/")
                     token = st.session_state.squadre[team].get("token", "")
 
                     if not base_url.startswith("http"):
-                        st.warning("⚠️ Imposta sotto l'URL base della tua app (https://…streamlit.app).")
+                        st.warning("⚠️ Imposta sotto l'URL base (https://…streamlit.app).")
                     else:
                         link = f"{base_url}/?mode=campo&team={team}&token={token}"
                         st.code(link, language="text")
-
                         png = qr_png_bytes(link)
                         st.image(png, width=230)
-
                         st.download_button(
                             "⬇️ Scarica QR (PNG)",
                             data=png,
@@ -881,12 +801,10 @@ with st.sidebar:
                             mime="image/png",
                             key=f"dlqr_{team}",
                         )
-
                     if st.button("❌ Chiudi QR", key=f"closeqr_{team}"):
                         st.session_state.team_qr_open = None
                         st.rerun()
 
-                # Elimina
                 st.divider()
                 conferma = st.checkbox("Confermo eliminazione squadra", key=f"confdel_{team}")
                 if st.button("🗑️ ELIMINA SQUADRA", key=f"del_{team}", disabled=not conferma):
@@ -894,7 +812,6 @@ with st.sidebar:
                     (st.success if ok else st.warning)(msg)
                     st.rerun()
 
-        # --- CREA SQUADRA (SOTTO) ---
         st.divider()
         st.markdown("## ➕ CREA SQUADRA")
         with st.form("form_add_team", clear_on_submit=True):
@@ -902,7 +819,6 @@ with st.sidebar:
             capo = st.text_input("Nome caposquadra", placeholder="Es. Rossi Mario")
             tel = st.text_input("Telefono caposquadra", placeholder="Es. 3331234567")
             submitted = st.form_submit_button("➕ AGGIUNGI SQUADRA")
-
         if submitted:
             nome = (n_sq or "").strip().upper()
             if not nome:
@@ -922,7 +838,6 @@ with st.sidebar:
                 st.success("✅ Squadra creata! (QR aperto)")
                 st.rerun()
 
-        # --- URL APP (SOTTO TUTTO) ---
         st.divider()
         st.markdown("## 🌐 URL APP (per QR)")
         st.session_state.BASE_URL = st.text_input(
@@ -932,7 +847,7 @@ with st.sidebar:
             help="Incolla l'URL della tua app pubblicata."
         ).strip()
 
-    # BACKUP IN FONDO
+    # BACKUP in fondo
     st.divider()
     st.markdown("## 💾 Backup / Ripristino")
     payload_now = {
@@ -946,14 +861,12 @@ with st.sidebar:
         "ev_nome": st.session_state.ev_nome,
         "ev_desc": st.session_state.ev_desc,
     }
-
     st.download_button(
         "⬇️ Scarica BACKUP JSON",
         data=json.dumps(payload_now, ensure_ascii=False, indent=2).encode("utf-8"),
         file_name="backup_radio_manager.json",
         mime="application/json",
     )
-
     up = st.file_uploader("⬆️ Ripristina da backup JSON", type=["json"])
     if up is not None:
         if st.button("🔁 RIPRISTINA ORA"):
@@ -1180,6 +1093,8 @@ with t_rep:
     st.divider()
     if df.empty:
         st.info("Nessun dato nel brogliaccio.")
+        df_f = pd.DataFrame()
+        df_view = pd.DataFrame()
     else:
         df_f = df[df["sq"] == filtro].copy() if filtro != "TUTTE" else df.copy()
         df_view = df_for_report(df_f)
@@ -1188,6 +1103,32 @@ with t_rep:
         st.divider()
         csv = df_f.to_csv(index=False).encode("utf-8")
         st.download_button("⬇️ Scarica CSV filtrato", data=csv, file_name="brogliaccio.csv", mime="text/csv")
+
+    # ✅ HTML REPORT CON STAMPA + MAPPA (tutte le squadre + selettore)
+    st.divider()
+    st.subheader("🖨️ Report HTML con selettore stampa + mappa")
+
+    meta = {
+        "ev_data": str(st.session_state.ev_data),
+        "ev_tipo": st.session_state.ev_tipo,
+        "ev_nome": st.session_state.ev_nome,
+        "ev_desc": st.session_state.ev_desc,
+        "op_name": st.session_state.op_name,
+    }
+
+    html_bytes = make_html_report_bytes(
+        squads=st.session_state.squadre,
+        brogliaccio=st.session_state.brogliaccio,
+        center=st.session_state.pos_mappa,
+        meta=meta,
+    )
+
+    st.download_button(
+        "⬇️ Scarica REPORT HTML (con stampa e mappa)",
+        data=html_bytes,
+        file_name="report_radio_manager.html",
+        mime="text/html",
+    )
 
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1221,31 +1162,6 @@ if st.session_state.open_map_event is not None:
             st.rerun()
 
         st.markdown("</div>", unsafe_allow_html=True)
-    st.divider()
-    st.subheader("🖨️ Report HTML con selettore stampa + mappa")
-
-    meta = {
-        "ev_data": str(st.session_state.ev_data),
-        "ev_tipo": st.session_state.ev_tipo,
-        "ev_nome": st.session_state.ev_nome,
-        "ev_desc": st.session_state.ev_desc,
-        "op_name": st.session_state.op_name,
-    }
-
-    html_bytes = make_html_report_bytes(
-        squads=st.session_state.squadre,
-        brogliaccio=st.session_state.brogliaccio,
-        center=st.session_state.pos_mappa,
-        meta=meta,
-    )
-
-    st.download_button(
-        "⬇️ Scarica REPORT HTML (con stampa e mappa)",
-        data=html_bytes,
-        file_name="report_radio_manager.html",
-        mime="text/html",
-    )
-
 
 for i, b in enumerate(st.session_state.brogliaccio):
     gps_ok = isinstance(b.get("pos"), list) and len(b["pos"]) == 2

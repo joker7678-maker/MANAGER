@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 from datetime import datetime
 import folium
@@ -585,40 +586,6 @@ def make_html_report_bytes(
   }}
 
 
-/* Sidebar - lista squadre in "schede" chiare */
-section[data-testid="stSidebar"] .pc-squad-list div[data-testid="stExpander"]{
-  background: transparent !important;
-  border: none !important;
-}
-section[data-testid="stSidebar"] .pc-squad-list div[data-testid="stExpander"] details{
-  background: #ffffff !important;
-  border: 1px solid rgba(15,23,42,.18) !important;
-  border-radius: 14px !important;
-  margin: 10px 0 !important;
-  overflow: hidden !important;
-  box-shadow: 0 10px 22px rgba(2,6,23,.12) !important;
-}
-section[data-testid="stSidebar"] .pc-squad-list div[data-testid="stExpander"] summary{
-  background: linear-gradient(180deg, #ffffff 0%, #f1f5f9 100%) !important;
-  color: #0b1220 !important;
-  font-weight: 950 !important;
-  padding: 10px 12px !important;
-  border-bottom: 1px solid rgba(15,23,42,.10) !important;
-}
-section[data-testid="stSidebar"] .pc-squad-list div[data-testid="stExpander"] summary svg{
-  fill: #0b1220 !important;
-  color: #0b1220 !important;
-  opacity: 1 !important;
-}
-section[data-testid="stSidebar"] .pc-squad-list div[data-testid="stExpander"] [data-testid="stMarkdownContainer"] p,
-section[data-testid="stSidebar"] .pc-squad-list div[data-testid="stExpander"] label,
-section[data-testid="stSidebar"] .pc-squad-list div[data-testid="stExpander"] span{
-  color: #0b1220 !important;
-}
-section[data-testid="stSidebar"] .pc-squad-list div[data-testid="stExpander"] hr{
-  border-color: rgba(15,23,42,.12) !important;
-}
-
 </style>
 </head>
 
@@ -1083,35 +1050,6 @@ section[data-testid="stSidebar"] .stDownloadButton > button{
   font-weight: 950 !important;
 }
 
-/* Sidebar: expander "scheda" chiara (leggibile anche su sidebar scura) */
-section[data-testid="stSidebar"] details[data-testid="stExpander"]{
-  border: 1px solid rgba(15,23,42,.18) !important;
-  border-radius: 14px !important;
-  background: #ffffff !important;
-  overflow: hidden !important;
-  box-shadow: 0 8px 18px rgba(2,6,23,.10) !important;
-}
-section[data-testid="stSidebar"] details[data-testid="stExpander"] > summary{
-  padding: 10px 12px !important;
-  border-radius: 14px !important;
-  background: #f1f5f9 !important;
-  color: #0b1220 !important;
-  font-weight: 950 !important;
-}
-section[data-testid="stSidebar"] details[data-testid="stExpander"] > summary:hover{
-  background: #e2e8f0 !important;
-}
-section[data-testid="stSidebar"] details[data-testid="stExpander"] > summary svg,
-section[data-testid="stSidebar"] [data-testid="stExpanderToggleIcon"],
-section[data-testid="stSidebar"] [data-testid="stExpanderToggleIcon"] svg{
-  color: #0b1220 !important;
-  fill: #0b1220 !important;
-  opacity: 1 !important;
-}
-section[data-testid="stSidebar"] details[data-testid="stExpander"] div[data-testid="stMarkdownContainer"] p{
-  color: #0b1220 !important;
-}
-
 /* NATO mini (solo sala radio) */
 .nato-title{margin-top:10px;font-weight:950;color:#0d47a1;font-size:.9rem;}
 .nato-mini{display:grid;grid-template-columns:repeat(auto-fill,minmax(74px,1fr));gap:6px;margin-top:10px;}
@@ -1143,9 +1081,6 @@ section[data-testid="stSidebar"] details[data-testid="stExpander"] div[data-test
   padding: 14px 14px !important;
   font-weight: 950 !important;
   border: 1px solid rgba(15,23,42,.14) !important;
-  /* Visibile anche in modalità scura (telefono) */
-  background: linear-gradient(180deg, #fde68a 0%, #fbbf24 100%) !important;
-  color: #0b1220 !important;
 }
 .capo-mode .stButton > button:hover{ filter: brightness(0.98); }
 .capo-mode textarea, .capo-mode input{
@@ -1163,6 +1098,46 @@ section[data-testid="stSidebar"] details[data-testid="stExpander"] div[data-test
 # SIDEBAR
 # =========================
 with st.sidebar:
+    # ⏱️ OROLOGIO (tempo reale)
+    components.html(
+        """
+        <div style="
+            width:100%;
+            padding:14px 12px;
+            border-radius:16px;
+            background: linear-gradient(135deg, #0d47a1 0%, #0b1f3a 80%);
+            border: 1px solid rgba(255,255,255,.18);
+            box-shadow: 0 10px 28px rgba(2,6,23,.14);
+            color:white;
+            text-align:center;
+            margin-bottom: 10px;">
+          <div style="font-weight:900;letter-spacing:.8px;opacity:.9;font-size:.85rem;text-transform:uppercase;">
+            🕒 ORA LOCALE
+          </div>
+          <div id="pcClock" style="font-weight:950;font-size:2.0rem;line-height:1.1;margin-top:4px;">
+            --:--:--
+          </div>
+          <div id="pcDate" style="font-weight:800;opacity:.88;font-size:.95rem;margin-top:4px;">
+            --
+          </div>
+        </div>
+        <script>
+          function pcTick(){
+            const now = new Date();
+            const t = new Intl.DateTimeFormat('it-IT', {hour:'2-digit', minute:'2-digit', second:'2-digit'}).format(now);
+            const d = new Intl.DateTimeFormat('it-IT', {weekday:'long', year:'numeric', month:'long', day:'2-digit'}).format(now);
+            const elT = document.getElementById('pcClock');
+            const elD = document.getElementById('pcDate');
+            if(elT) elT.textContent = t;
+            if(elD) elD.textContent = d;
+          }
+          pcTick();
+          setInterval(pcTick, 1000);
+        </script>
+        """,
+        height=150,
+    )
+
     st.markdown("## 🛡️ NAVIGAZIONE")
 
     if st.session_state.get("field_ok"):
@@ -1176,7 +1151,6 @@ with st.sidebar:
         st.markdown("## 👥 SQUADRE")
         st.caption(f"Totale: **{len(st.session_state.squadre)}**")
 
-        st.markdown("<div class=\'pc-squad-list\'>", unsafe_allow_html=True)
         squadre_sorted = sorted(list(st.session_state.squadre.keys()))
         for team in squadre_sorted:
             inf = get_squadra_info(team)
@@ -1251,8 +1225,6 @@ with st.sidebar:
                     ok, msg = delete_team(team)
                     (st.success if ok else st.warning)(msg)
                     st.rerun()
-
-        st.markdown("</div>", unsafe_allow_html=True)
 
         st.divider()
         st.markdown("## ➕ CREA SQUADRA")

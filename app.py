@@ -1050,6 +1050,14 @@ section[data-testid="stSidebar"] .stDownloadButton > button{
   border-radius: 10px !important;
 }
 
+
+/* Tastiera NATO: chip veri + overlay click invisibile */
+.nato-key-wrap{position:relative;}
+.nato-key-wrap .stButton{position:absolute;inset:0;z-index:5;margin:0!important;}
+.nato-key-wrap .stButton>button{width:100%!important;height:100%!important;opacity:0!important;padding:0!important;margin:0!important;border:none!important;}
+.nato-key-wrap .stButton>button:focus{outline:none!important;box-shadow:none!important;}
+.nato-key-wrap .nato-chip{position:relative;z-index:1;}
+
 @media print{.nato-title,.nato-mini,.nato-spell{display:none!important;}}
 
 </style>
@@ -1531,7 +1539,11 @@ with t_rad:
             for row in rows:
                 cols = st.columns(len(row))
                 for c, letter in zip(cols, row):
-                    if c.button(f"{letter}\n{NATO[letter]}", use_container_width=True, key=f"nato_key_{letter}"):
+                    st.markdown("<div class=\'nato-key-wrap\'>", unsafe_allow_html=True)
+                    if c.button(" ", use_container_width=True, key=f"nato_key_{letter}"):
+                        st.session_state.nato_phrase += letter
+                    st.markdown(f"""<div class="nato-chip nato-spell"><div class="nato-letter">{letter}</div><div class="nato-word">{NATO[letter]}</div></div>""", unsafe_allow_html=True)
+                    st.markdown("</div>", unsafe_allow_html=True)
                         st.session_state.nato_phrase += letter
 
             st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
@@ -1541,7 +1553,11 @@ with t_rad:
             for row in drows:
                 cols = st.columns(len(row))
                 for c, d in zip(cols, row):
-                    if c.button(f"{d}\n{NATO_NUM[d]}", use_container_width=True, key=f"nato_digit_{d}"):
+                    st.markdown("<div class=\'nato-key-wrap\'>", unsafe_allow_html=True)
+                    if c.button(" ", use_container_width=True, key=f"nato_digit_{d}"):
+                        st.session_state.nato_phrase += d
+                    st.markdown(f"""<div class="nato-chip nato-spell"><div class="nato-letter">{d}</div><div class="nato-word">{NATO_NUM[d]}</div></div>""", unsafe_allow_html=True)
+                    st.markdown("</div>", unsafe_allow_html=True)
                         st.session_state.nato_phrase += d
 
             st.markdown("</div>", unsafe_allow_html=True)

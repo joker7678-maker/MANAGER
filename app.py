@@ -19,7 +19,7 @@ st.set_page_config(page_title="RADIO MANAGER - PROTEZIONE CIVILE THIENE", layout
 DATA_PATH = "data.json"
 LOGO_PATH = "logo.png"
 
-# ⚠️ Per avere MAPPA CHE STAMPA SICURO nell'HTML:
+# âš ï¸ Per avere MAPPA CHE STAMPA SICURO nell'HTML:
 # aggiungi in requirements.txt:
 # staticmap==0.5.7
 # pillow==10.4.0
@@ -97,12 +97,12 @@ def call_flow_from_row(row: dict) -> Tuple[str, str]:
     chi = (row.get("chi") or "").strip()
     sq = (row.get("sq") or "").strip()
     if chi.upper() == "SALA OPERATIVA":
-        return "SALA OPERATIVA", (sq if sq else "—")
+        return "SALA OPERATIVA", (sq if sq else "â€”")
     return (sq if sq else "SQUADRA"), "SALA OPERATIVA"
 
 def chip_call_flow(row: dict) -> str:
     a, b = call_flow_from_row(row)
-    return f"<div class='pc-flow'>📞 <b>{a}</b> <span class='pc-arrow'>➜</span> 🎧 <b>{b}</b></div>"
+    return f"<div class='pc-flow'>ðŸ“ž <b>{a}</b> <span class='pc-arrow'>âžœ</span> ðŸŽ§ <b>{b}</b></div>"
 
 def build_folium_map_from_df(df: pd.DataFrame, center: list, zoom: int = 13) -> folium.Map:
     m = folium.Map(location=center, zoom_start=zoom)
@@ -137,7 +137,7 @@ def df_for_report(df: pd.DataFrame) -> pd.DataFrame:
         chi = (row.get("chi") or "").strip()
         sq = (row.get("sq") or "").strip()
         if chi.upper() == "SALA OPERATIVA":
-            return "SALA OPERATIVA", sq if sq else "—"
+            return "SALA OPERATIVA", sq if sq else "â€”"
         return sq if sq else "SQUADRA", "SALA OPERATIVA"
 
     cr = out.apply(_caller_receiver, axis=1, result_type="expand")
@@ -181,7 +181,7 @@ def _extract_points_latest_by_team(df: pd.DataFrame) -> List[Tuple[float, float,
     if df.empty:
         return points
 
-    # df è in ordine "brogliaccio" (noi inseriamo in testa), quindi per latest basta primo che ha pos per squadra
+    # df Ã¨ in ordine "brogliaccio" (noi inseriamo in testa), quindi per latest basta primo che ha pos per squadra
     seen = set()
     for _, row in df.iterrows():
         sq = (row.get("sq") or "").strip()
@@ -194,7 +194,7 @@ def _extract_points_latest_by_team(df: pd.DataFrame) -> List[Tuple[float, float,
             except Exception:
                 continue
             stt = (row.get("st") or "").strip()
-            label = f"{sq} · {stt}" if stt else sq
+            label = f"{sq} Â· {stt}" if stt else sq
             points.append((lat, lon, label))
             seen.add(sq)
     return points
@@ -216,7 +216,7 @@ def _extract_points_all_events(df: pd.DataFrame) -> List[Tuple[float, float, str
             sq = (row.get("sq") or "").strip()
             ora = (row.get("ora") or "").strip()
             stt = (row.get("st") or "").strip()
-            label = " · ".join([x for x in [sq, ora, stt] if x])
+            label = " Â· ".join([x for x in [sq, ora, stt] if x])
             points.append((lat, lon, label if label else "Evento"))
     return points
 
@@ -227,7 +227,7 @@ def _extract_polyline_all_events(df: pd.DataFrame) -> List[Tuple[float, float]]:
     line = []
     if df.empty:
         return line
-    # qui metto cronologico: df è newest->oldest, quindi invertiamo
+    # qui metto cronologico: df Ã¨ newest->oldest, quindi invertiamo
     for _, row in df.iloc[::-1].iterrows():
         pos = row.get("pos")
         if isinstance(pos, list) and len(pos) == 2:
@@ -283,7 +283,7 @@ def make_html_report_bytes(
     - selettore squadra (TUTTE o singola)
     - selettore MAPPA (Ultime posizioni / Tutti eventi / Percorso)
     - checkbox "Stampa con mappa"
-    MAPPA in HTML è un'IMMAGINE base64 -> stampa sempre.
+    MAPPA in HTML Ã¨ un'IMMAGINE base64 -> stampa sempre.
     """
     df_all = pd.DataFrame(brogliaccio)
 
@@ -311,7 +311,7 @@ def make_html_report_bytes(
         """
         # LATEST
         pts_latest = _extract_points_latest_by_team(df_x) if "sq" in df_x.columns else _extract_points_all_events(df_x)
-        # se df_x è filtrato per squadra, latest_by_team = 1 punto (ok); se totale = multi-squadre (ok)
+        # se df_x Ã¨ filtrato per squadra, latest_by_team = 1 punto (ok); se totale = multi-squadre (ok)
         png_latest = render_static_map_png(pts_latest, polyline=None, zoom=14)
 
         # ALL
@@ -320,7 +320,7 @@ def make_html_report_bytes(
 
         # TRACK (percorso)
         line = _extract_polyline_all_events(df_x)
-        # per track: punti = punti all (così si vedono anche marker)
+        # per track: punti = punti all (cosÃ¬ si vedono anche marker)
         png_track = render_static_map_png(pts_all, polyline=line if len(line) >= 2 else None, zoom=14)
 
         def _placeholder(text: str) -> str:
@@ -337,9 +337,9 @@ def make_html_report_bytes(
             return "data:image/svg+xml;base64," + base64.b64encode(svg).decode("utf-8")
 
         out = {}
-        out["LATEST"] = bytes_to_data_uri_png(png_latest) if png_latest else _placeholder("Modalità: ULTIME POSIZIONI")
-        out["ALL"] = bytes_to_data_uri_png(png_all) if png_all else _placeholder("Modalità: TUTTI EVENTI")
-        out["TRACK"] = bytes_to_data_uri_png(png_track) if png_track else _placeholder("Modalità: PERCORSO")
+        out["LATEST"] = bytes_to_data_uri_png(png_latest) if png_latest else _placeholder("ModalitÃ : ULTIME POSIZIONI")
+        out["ALL"] = bytes_to_data_uri_png(png_all) if png_all else _placeholder("ModalitÃ : TUTTI EVENTI")
+        out["TRACK"] = bytes_to_data_uri_png(png_track) if png_track else _placeholder("ModalitÃ : PERCORSO")
         return out
 
     # ====== SEZIONE TUTTE
@@ -363,10 +363,10 @@ def make_html_report_bytes(
         <hr/>
 
         <div class="mapblock">
-          <div class="h3">🗺️ MAPPA (seleziona cosa stampare)</div>
+          <div class="h3">ðŸ—ºï¸ MAPPA (seleziona cosa stampare)</div>
 
           <div class="mapmode">
-            <label>Modalità mappa:</label>
+            <label>ModalitÃ  mappa:</label>
             <select class="selMap" onchange="setMapModeForSection('rep_TUTTE', this.value)">
               <option value="LATEST">Ultime posizioni (per squadra)</option>
               <option value="ALL">Tutti eventi (punti)</option>
@@ -381,7 +381,7 @@ def make_html_report_bytes(
           </div>
         </div>
 
-        <div class="h3">📋 LOG</div>
+        <div class="h3">ðŸ“‹ LOG</div>
         {tab_tot}
       </section>
     """)
@@ -398,9 +398,9 @@ def make_html_report_bytes(
         df_view_sq = df_for_report(df_sq) if not df_sq.empty else pd.DataFrame()
         tab_sq = _df_to_html_table(df_view_sq)
 
-        capo = _safe((squads.get(sq, {}) or {}).get("capo", "") or "—")
-        tel = _safe((squads.get(sq, {}) or {}).get("tel", "") or "—")
-        stato = _safe((squads.get(sq, {}) or {}).get("stato", "") or "—")
+        capo = _safe((squads.get(sq, {}) or {}).get("capo", "") or "â€”")
+        tel = _safe((squads.get(sq, {}) or {}).get("tel", "") or "â€”")
+        stato = _safe((squads.get(sq, {}) or {}).get("stato", "") or "â€”")
 
         maps_sq = _maps_for_df(df_sq) if not df_sq.empty else {
             "LATEST": "",
@@ -426,10 +426,10 @@ def make_html_report_bytes(
             <hr/>
 
             <div class="mapblock">
-              <div class="h3">🗺️ MAPPA EVENTI SQUADRA (scegli cosa stampare)</div>
+              <div class="h3">ðŸ—ºï¸ MAPPA EVENTI SQUADRA (scegli cosa stampare)</div>
 
               <div class="mapmode">
-                <label>Modalità mappa:</label>
+                <label>ModalitÃ  mappa:</label>
                 <select class="selMap" onchange="setMapModeForSection('rep_{_safe(sq)}', this.value)">
                   <option value="LATEST">Ultimo punto squadra</option>
                   <option value="ALL">Tutti eventi (punti)</option>
@@ -444,7 +444,7 @@ def make_html_report_bytes(
               </div>
             </div>
 
-            <div class="h3">📋 LOG</div>
+            <div class="h3">ðŸ“‹ LOG</div>
             {tab_sq}
           </section>
         """)
@@ -577,8 +577,8 @@ def make_html_report_bytes(
 <body>
   <div class="wrap">
     <div class="top">
-      <div class="title">Protezione Civile Thiene — Report Radio Manager</div>
-      <div class="sub">Seleziona cosa stampare. La mappa è un'immagine: in stampa esce sempre.</div>
+      <div class="title">Protezione Civile Thiene â€” Report Radio Manager</div>
+      <div class="sub">Seleziona cosa stampare. La mappa Ã¨ un'immagine: in stampa esce sempre.</div>
 
       <div class="controls">
         <label for="sel">Seleziona stampa:</label>
@@ -591,8 +591,8 @@ def make_html_report_bytes(
           <span>Stampa con mappa</span>
         </div>
 
-        <button class="btn" onclick="doPrint()">🖨️ STAMPA</button>
-        <button class="btn secondary" onclick="showAll()">👁️ Mostra tutto</button>
+        <button class="btn" onclick="doPrint()">ðŸ–¨ï¸ STAMPA</button>
+        <button class="btn secondary" onclick="showAll()">ðŸ‘ï¸ Mostra tutto</button>
       </div>
     </div>
 
@@ -812,9 +812,9 @@ def update_team(old_name: str, new_name: str, capo: str, tel: str) -> Tuple[bool
     if not old_name or old_name not in st.session_state.squadre:
         return False, "Seleziona una squadra valida."
     if not new_name:
-        return False, "Il nuovo nome non può essere vuoto."
+        return False, "Il nuovo nome non puÃ² essere vuoto."
     if new_name != old_name and new_name in st.session_state.squadre:
-        return False, "Esiste già una squadra con questo nome."
+        return False, "Esiste giÃ  una squadra con questo nome."
 
     if new_name != old_name:
         st.session_state.squadre[new_name] = st.session_state.squadre.pop(old_name)
@@ -840,7 +840,7 @@ def update_team(old_name: str, new_name: str, capo: str, tel: str) -> Tuple[bool
         st.session_state.squadre[new_name]["token"] = uuid.uuid4().hex
 
     save_data_to_disk()
-    return True, f"Aggiornata: {old_name} → {new_name}"
+    return True, f"Aggiornata: {old_name} â†’ {new_name}"
 
 def regenerate_team_token(team: str) -> None:
     team = (team or "").strip().upper()
@@ -881,7 +881,7 @@ def require_login():
 
     pw = st.secrets.get("APP_PASSWORD", None)
     if not pw:
-        st.warning("⚠️ APP_PASSWORD non impostata in Secrets.")
+        st.warning("âš ï¸ APP_PASSWORD non impostata in Secrets.")
         st.stop()
 
     if "auth_ok" not in st.session_state:
@@ -892,7 +892,7 @@ def require_login():
     if st.session_state.auth_ok:
         return
 
-    st.markdown("### 🔐 Accesso protetto (SALA OPERATIVA)")
+    st.markdown("### ðŸ” Accesso protetto (SALA OPERATIVA)")
     st.caption("Inserisci la password per entrare nella console.")
     p = st.text_input("Password", type="password")
     if st.button("Entra"):
@@ -1012,7 +1012,7 @@ section[data-testid="stSidebar"] .stDownloadButton > button{
 # SIDEBAR
 # =========================
 with st.sidebar:
-    st.markdown("## 🛡️ NAVIGAZIONE")
+    st.markdown("## ðŸ›¡ï¸ NAVIGAZIONE")
 
     if st.session_state.get("field_ok"):
         ruolo = "MODULO CAPOSQUADRA"
@@ -1022,38 +1022,38 @@ with st.sidebar:
     st.divider()
 
     if ruolo == "SALA OPERATIVA":
-        st.markdown("## 👥 SQUADRE")
+        st.markdown("## ðŸ‘¥ SQUADRE")
         st.caption(f"Totale: **{len(st.session_state.squadre)}**")
 
         squadre_sorted = sorted(list(st.session_state.squadre.keys()))
         for team in squadre_sorted:
             inf = get_squadra_info(team)
-            capo_txt = inf["capo"] if inf["capo"] else "—"
-            tel_txt = inf["tel"] if inf["tel"] else "—"
+            capo_txt = inf["capo"] if inf["capo"] else "â€”"
+            tel_txt = inf["tel"] if inf["tel"] else "â€”"
 
-            with st.expander(f"👥 {team}", expanded=False):
+            with st.expander(f"ðŸ‘¥ {team}", expanded=False):
                 st.markdown(chip_stato(inf["stato"]), unsafe_allow_html=True)
-                st.markdown(f"**👤 Capo:** {capo_txt}")
-                st.markdown(f"**📞 Tel:** {tel_txt}")
+                st.markdown(f"**ðŸ‘¤ Capo:** {capo_txt}")
+                st.markdown(f"**ðŸ“ž Tel:** {tel_txt}")
 
                 b1, b2 = st.columns(2)
-                if b1.button("✏️ MODIFICA", key=f"btn_edit_{team}"):
+                if b1.button("âœï¸ MODIFICA", key=f"btn_edit_{team}"):
                     st.session_state.team_edit_open = team
                     st.session_state.team_qr_open = None
                     st.rerun()
-                if b2.button("📱 QR", key=f"btn_qr_{team}"):
+                if b2.button("ðŸ“± QR", key=f"btn_qr_{team}"):
                     st.session_state.team_qr_open = team
                     st.session_state.team_edit_open = None
                     st.rerun()
 
                 if st.session_state.get("team_edit_open") == team:
                     st.divider()
-                    st.markdown("### ✏️ Modifica squadra")
+                    st.markdown("### âœï¸ Modifica squadra")
                     with st.form(f"form_edit_{team}"):
                         new_name = st.text_input("Nome squadra", value=team)
                         new_capo = st.text_input("Caposquadra", value=inf["capo"])
                         new_tel = st.text_input("Telefono", value=inf["tel"])
-                        save = st.form_submit_button("💾 SALVA MODIFICHE")
+                        save = st.form_submit_button("ðŸ’¾ SALVA MODIFICHE")
                     if save:
                         ok, msg = update_team(team, new_name, new_capo, new_tel)
                         (st.success if ok else st.warning)(msg)
@@ -1061,58 +1061,58 @@ with st.sidebar:
                             st.session_state.team_edit_open = None
                             st.rerun()
 
-                    st.caption("Se il QR è stato condiviso per errore, rigenera il token.")
-                    if st.button("♻️ Rigenera Token", key=f"regen_{team}"):
+                    st.caption("Se il QR Ã¨ stato condiviso per errore, rigenera il token.")
+                    if st.button("â™»ï¸ Rigenera Token", key=f"regen_{team}"):
                         regenerate_team_token(team)
-                        st.success("Token rigenerato ✅")
+                        st.success("Token rigenerato âœ…")
                         st.rerun()
 
                 if st.session_state.get("team_qr_open") == team:
                     st.divider()
-                    st.markdown("### 📱 QR accesso caposquadra")
+                    st.markdown("### ðŸ“± QR accesso caposquadra")
 
                     base_url = (st.session_state.get("BASE_URL") or "").strip().rstrip("/")
                     token = st.session_state.squadre[team].get("token", "")
 
                     if not base_url.startswith("http"):
-                        st.warning("⚠️ Imposta l'URL base: https://…streamlit.app")
+                        st.warning("âš ï¸ Imposta l'URL base: https://â€¦streamlit.app")
                     else:
                         link = f"{base_url}/?mode=campo&team={team}&token={token}"
                         st.code(link, language="text")
                         png = qr_png_bytes(link)
                         st.image(png, width=230)
                         st.download_button(
-                            "⬇️ Scarica QR (PNG)",
+                            "â¬‡ï¸ Scarica QR (PNG)",
                             data=png,
                             file_name=f"QR_{team.replace(' ', '_')}.png",
                             mime="image/png",
                             key=f"dlqr_{team}",
                         )
 
-                    if st.button("❌ Chiudi QR", key=f"closeqr_{team}"):
+                    if st.button("âŒ Chiudi QR", key=f"closeqr_{team}"):
                         st.session_state.team_qr_open = None
                         st.rerun()
 
                 st.divider()
                 conferma = st.checkbox("Confermo eliminazione squadra", key=f"confdel_{team}")
-                if st.button("🗑️ ELIMINA SQUADRA", key=f"del_{team}", disabled=not conferma):
+                if st.button("ðŸ—‘ï¸ ELIMINA SQUADRA", key=f"del_{team}", disabled=not conferma):
                     ok, msg = delete_team(team)
                     (st.success if ok else st.warning)(msg)
                     st.rerun()
 
         st.divider()
-        st.markdown("## ➕ CREA SQUADRA")
+        st.markdown("## âž• CREA SQUADRA")
         with st.form("form_add_team", clear_on_submit=True):
-            n_sq = st.text_input("Nome squadra", placeholder="Es. SQUADRA 2 / ALFA / DELTA…")
+            n_sq = st.text_input("Nome squadra", placeholder="Es. SQUADRA 2 / ALFA / DELTAâ€¦")
             capo = st.text_input("Nome caposquadra", placeholder="Es. Rossi Mario")
             tel = st.text_input("Telefono caposquadra", placeholder="Es. 3331234567")
-            submitted = st.form_submit_button("➕ AGGIUNGI SQUADRA")
+            submitted = st.form_submit_button("âž• AGGIUNGI SQUADRA")
         if submitted:
             nome = (n_sq or "").strip().upper()
             if not nome:
                 st.warning("Inserisci il nome squadra.")
             elif nome in st.session_state.squadre:
-                st.warning("Esiste già una squadra con questo nome.")
+                st.warning("Esiste giÃ  una squadra con questo nome.")
             else:
                 token = uuid.uuid4().hex
                 st.session_state.squadre[nome] = {
@@ -1123,11 +1123,11 @@ with st.sidebar:
                 }
                 save_data_to_disk()
                 st.session_state.team_qr_open = nome
-                st.success("✅ Squadra creata! (QR aperto)")
+                st.success("âœ… Squadra creata! (QR aperto)")
                 st.rerun()
 
         st.divider()
-        st.markdown("## 🌐 URL APP (per QR)")
+        st.markdown("## ðŸŒ URL APP (per QR)")
         st.caption("Se hai streamlit-js-eval si compila da solo; altrimenti incolla l'URL.")
         st.session_state.BASE_URL = st.text_input(
             "Base URL Streamlit Cloud",
@@ -1138,7 +1138,7 @@ with st.sidebar:
 
     # BACKUP in fondo
     st.divider()
-    st.markdown("## 💾 Backup / Ripristino")
+    st.markdown("## ðŸ’¾ Backup / Ripristino")
     payload_now = {
         "brogliaccio": st.session_state.brogliaccio,
         "inbox": st.session_state.inbox,
@@ -1152,14 +1152,14 @@ with st.sidebar:
         "BASE_URL": st.session_state.get("BASE_URL", ""),
     }
     st.download_button(
-        "⬇️ Scarica BACKUP JSON",
+        "â¬‡ï¸ Scarica BACKUP JSON",
         data=json.dumps(payload_now, ensure_ascii=False, indent=2).encode("utf-8"),
         file_name="backup_radio_manager.json",
         mime="application/json",
     )
-    up = st.file_uploader("⬆️ Ripristina da backup JSON", type=["json"])
+    up = st.file_uploader("â¬†ï¸ Ripristina da backup JSON", type=["json"])
     if up is not None:
-        if st.button("🔁 RIPRISTINA ORA"):
+        if st.button("ðŸ” RIPRISTINA ORA"):
             load_data_from_uploaded_json(up.read())
             st.success("Ripristino completato.")
             st.rerun()
@@ -1178,10 +1178,10 @@ st.markdown(
     {logo_html}
     <div>
       <div class="title">Protezione Civile Thiene</div>
-      <div class="subtitle">Radio Manager Pro · Console Operativa Sala Radio</div>
+      <div class="subtitle">Radio Manager Pro Â· Console Operativa Sala Radio</div>
     </div>
   </div>
-  <div class="pc-badge">📡 {badge_ruolo}</div>
+  <div class="pc-badge">ðŸ“¡ {badge_ruolo}</div>
 </div>
 """,
     unsafe_allow_html=True,
@@ -1192,33 +1192,33 @@ st.markdown(
 # =========================
 if badge_ruolo == "MODULO CAPOSQUADRA":
     st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
-    st.subheader("📱 Modulo da campo")
+    st.subheader("ðŸ“± Modulo da campo")
 
     if st.session_state.get("field_ok"):
         sq_c = st.session_state.get("field_team")
-        st.info(f"🔒 Accesso campo abilitato per: **{sq_c}**")
+        st.info(f"ðŸ”’ Accesso campo abilitato per: **{sq_c}**")
     else:
         sq_c = st.selectbox("TUA SQUADRA:", list(st.session_state.squadre.keys()))
 
     info_sq = get_squadra_info(sq_c)
-    st.markdown(f"**👤 Caposquadra:** {info_sq['capo'] or '—'} &nbsp;&nbsp; | &nbsp;&nbsp; **📞 Tel:** {info_sq['tel'] or '—'}")
+    st.markdown(f"**ðŸ‘¤ Caposquadra:** {info_sq['capo'] or 'â€”'} &nbsp;&nbsp; | &nbsp;&nbsp; **ðŸ“ž Tel:** {info_sq['tel'] or 'â€”'}")
 
-    share_gps = st.checkbox("📍 Includi posizione GPS (Privacy)", value=True)
+    share_gps = st.checkbox("ðŸ“ Includi posizione GPS (Privacy)", value=True)
 
-    st.subheader("📍 Invio rapido")
+    st.subheader("ðŸ“ Invio rapido")
     msg_rapido = st.text_input("Nota breve:", placeholder="In movimento, arrivati...")
 
-    if st.button("🚀 INVIA COORDINATE E MESSAGGIO"):
+    if st.button("ðŸš€ INVIA COORDINATE E MESSAGGIO"):
         pos_da_inviare = st.session_state.pos_mappa if share_gps else None
         st.session_state.inbox.append(
             {"ora": datetime.now().strftime("%H:%M"), "sq": sq_c, "msg": msg_rapido or "Aggiornamento posizione", "foto": None, "pos": pos_da_inviare}
         )
         save_data_to_disk()
-        st.success("✅ Inviato!")
+        st.success("âœ… Inviato!")
 
     st.divider()
     with st.form("form_c"):
-        st.subheader("📸 Rapporto completo")
+        st.subheader("ðŸ“¸ Rapporto completo")
         msg_c = st.text_area("DESCRIZIONE:")
         foto = st.file_uploader("FOTO:", type=["jpg", "jpeg", "png"])
         if st.form_submit_button("INVIA TUTTO + GPS"):
@@ -1227,7 +1227,7 @@ if badge_ruolo == "MODULO CAPOSQUADRA":
                 {"ora": datetime.now().strftime("%H:%M"), "sq": sq_c, "msg": msg_c, "foto": foto.read() if foto else None, "pos": pos_da_inviare}
             )
             save_data_to_disk()
-            st.success("✅ Inviato!")
+            st.success("âœ… Inviato!")
 
     st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
@@ -1235,7 +1235,7 @@ if badge_ruolo == "MODULO CAPOSQUADRA":
 # =========================
 # SALA OPERATIVA
 # =========================
-st.markdown("<h1 style='text-align:center;color:#0d47a1;margin-top:-10px;'>📡 CONSOLE SALA RADIO</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align:center;color:#0d47a1;margin-top:-10px;'>ðŸ“¡ CONSOLE SALA RADIO</h1>", unsafe_allow_html=True)
 
 st_lista = [info.get("stato", "In attesa al COC") for info in st.session_state.squadre.values()]
 c1, c2, c3, c4, c5 = st.columns(5)
@@ -1249,29 +1249,29 @@ def metric_box(col, icon, label, value):
     </div>
     """
 
-c1.markdown(metric_box(COLORI_STATI["In uscita dal COC"]["hex"], "🚪", "Uscita", st_lista.count("In uscita dal COC")), unsafe_allow_html=True)
-c2.markdown(metric_box(COLORI_STATI["Intervento in corso"]["hex"], "🔥", "In corso", st_lista.count("Intervento in corso")), unsafe_allow_html=True)
-c3.markdown(metric_box(COLORI_STATI["Intervento concluso"]["hex"], "✅", "Conclusi", st_lista.count("Intervento concluso")), unsafe_allow_html=True)
-c4.markdown(metric_box(COLORI_STATI["Rientrata al Coc"]["hex"], "↩️", "Rientro", st_lista.count("Rientrata al Coc")), unsafe_allow_html=True)
-c5.markdown(metric_box(COLORI_STATI["In attesa al COC"]["hex"], "🏠", "Al COC", st_lista.count("In attesa al COC")), unsafe_allow_html=True)
+c1.markdown(metric_box(COLORI_STATI["In uscita dal COC"]["hex"], "ðŸšª", "Uscita", st_lista.count("In uscita dal COC")), unsafe_allow_html=True)
+c2.markdown(metric_box(COLORI_STATI["Intervento in corso"]["hex"], "ðŸ”¥", "In corso", st_lista.count("Intervento in corso")), unsafe_allow_html=True)
+c3.markdown(metric_box(COLORI_STATI["Intervento concluso"]["hex"], "âœ…", "Conclusi", st_lista.count("Intervento concluso")), unsafe_allow_html=True)
+c4.markdown(metric_box(COLORI_STATI["Rientrata al Coc"]["hex"], "â†©ï¸", "Rientro", st_lista.count("Rientrata al Coc")), unsafe_allow_html=True)
+c5.markdown(metric_box(COLORI_STATI["In attesa al COC"]["hex"], "ðŸ ", "Al COC", st_lista.count("In attesa al COC")), unsafe_allow_html=True)
 
 # =========================
 # INBOX APPROVAZIONE
 # =========================
 if st.session_state.inbox:
-    st.markdown(f"<div class='pc-alert'>⚠️ RICEVUTI {len(st.session_state.inbox)} AGGIORNAMENTI DA VALIDARE</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='pc-alert'>âš ï¸ RICEVUTI {len(st.session_state.inbox)} AGGIORNAMENTI DA VALIDARE</div>", unsafe_allow_html=True)
 
     for i, data in enumerate(st.session_state.inbox):
         sq_in = data["sq"]
         inf_in = get_squadra_info(sq_in)
 
-        with st.expander(f"📥 APPROVAZIONE: {sq_in} ({data['ora']})", expanded=True):
-            st.markdown(f"<div class='pc-flow'>📞 <b>{sq_in}</b> <span class='pc-arrow'>➜</span> 🎧 <b>SALA OPERATIVA</b></div>", unsafe_allow_html=True)
-            st.markdown(f"**👤 Caposquadra:** {inf_in['capo'] or '—'} &nbsp;&nbsp; | &nbsp;&nbsp; **📞 Tel:** {inf_in['tel'] or '—'}")
+        with st.expander(f"ðŸ“¥ APPROVAZIONE: {sq_in} ({data['ora']})", expanded=True):
+            st.markdown(f"<div class='pc-flow'>ðŸ“ž <b>{sq_in}</b> <span class='pc-arrow'>âžœ</span> ðŸŽ§ <b>SALA OPERATIVA</b></div>", unsafe_allow_html=True)
+            st.markdown(f"**ðŸ‘¤ Caposquadra:** {inf_in['capo'] or 'â€”'} &nbsp;&nbsp; | &nbsp;&nbsp; **ðŸ“ž Tel:** {inf_in['tel'] or 'â€”'}")
 
             st.write(f"**MSG:** {data['msg']}")
             if data["pos"]:
-                st.info(f"📍 GPS acquisito: {data['pos']}")
+                st.info(f"ðŸ“ GPS acquisito: {data['pos']}")
             if data["foto"]:
                 st.image(data["foto"], width=220)
 
@@ -1279,7 +1279,7 @@ if st.session_state.inbox:
             st.markdown(chip_stato(st_v), unsafe_allow_html=True)
 
             cb1, cb2 = st.columns(2)
-            if cb1.button("✅ APPROVA", key=f"ap_{i}"):
+            if cb1.button("âœ… APPROVA", key=f"ap_{i}"):
                 pref = "[AUTO]" if data["pos"] else "[AUTO-PRIVACY]"
                 st.session_state.brogliaccio.insert(
                     0,
@@ -1292,7 +1292,7 @@ if st.session_state.inbox:
                 save_data_to_disk()
                 st.rerun()
 
-            if cb2.button("🗑️ SCARTA", key=f"sc_{i}"):
+            if cb2.button("ðŸ—‘ï¸ SCARTA", key=f"sc_{i}"):
                 st.session_state.inbox.pop(i)
                 save_data_to_disk()
                 st.rerun()
@@ -1301,7 +1301,7 @@ if st.session_state.inbox:
 # DATI EVENTO
 # =========================
 st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
-st.subheader("📋 Dati Intervento ed Evento")
+st.subheader("ðŸ“‹ Dati Intervento ed Evento")
 cd1, cd2, cd3, cd4 = st.columns([1, 1, 1, 2])
 
 st.session_state.ev_data = cd1.date_input("DATA", value=st.session_state.ev_data)
@@ -1319,7 +1319,7 @@ st.markdown("</div>", unsafe_allow_html=True)
 # =========================
 # TABS
 # =========================
-t_rad, t_rep = st.tabs(["🖥️ SALA RADIO", "📊 REPORT"])
+t_rad, t_rep = st.tabs(["ðŸ–¥ï¸ SALA RADIO", "ðŸ“Š REPORT"])
 
 with t_rad:
     l, r = st.columns([1, 1.2])
@@ -1332,7 +1332,7 @@ with t_rad:
 
             sq = st.selectbox("SQUADRA", list(st.session_state.squadre.keys()))
             inf = get_squadra_info(sq)
-            st.caption(f"👤 Caposquadra: {inf['capo'] or '—'} · 📞 {inf['tel'] or '—'}")
+            st.caption(f"ðŸ‘¤ Caposquadra: {inf['capo'] or 'â€”'} Â· ðŸ“ž {inf['tel'] or 'â€”'}")
 
             st_s = st.selectbox("STATO", list(COLORI_STATI.keys()))
             mit = st.text_area("MESSAGGIO")
@@ -1356,102 +1356,26 @@ with t_rad:
         st.markdown("</div>", unsafe_allow_html=True)
 
     with r:
-        # ✅ INBOX sopra la mappa (chiuso di default)
-        if st.session_state.inbox:
-            st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
-            st.subheader("📥 Aggiornamenti da campo (da validare)")
-            st.caption(f"Totale: **{len(st.session_state.inbox)}** — apri un messaggio alla volta.")
-
-            # elenco expander CHIUSI
-            for i, data in enumerate(st.session_state.inbox):
-                sq_in = data["sq"]
-                inf_in = get_squadra_info(sq_in)
-
-                with st.expander(f"📥 {sq_in} ({data['ora']})", expanded=False):
-                    st.markdown(
-                        f"<div class='pc-flow'>📞 <b>{sq_in}</b> <span class='pc-arrow'>➜</span> 🎧 <b>SALA OPERATIVA</b></div>",
-                        unsafe_allow_html=True
-                    )
-                    st.markdown(
-                        f"**👤 Caposquadra:** {inf_in['capo'] or '—'} &nbsp;&nbsp; | &nbsp;&nbsp; **📞 Tel:** {inf_in['tel'] or '—'}"
-                    )
-
-                    st.write(f"**MSG:** {data['msg']}")
-                    if data.get("pos"):
-                        st.info(f"📍 GPS acquisito: {data['pos']}")
-                    if data.get("foto"):
-                        st.image(data["foto"], width=220)
-
-                    st_v = st.selectbox("Nuovo Stato:", list(COLORI_STATI.keys()), key=f"sv_inbox_{i}")
-                    st.markdown(chip_stato(st_v), unsafe_allow_html=True)
-
-                    cb1, cb2 = st.columns(2)
-                    if cb1.button("✅ APPROVA", key=f"ap_{i}"):
-                        pref = "[AUTO]" if data.get("pos") else "[AUTO-PRIVACY]"
-                        st.session_state.brogliaccio.insert(
-                            0,
-                            {"ora": data["ora"], "chi": sq_in, "sq": sq_in, "st": st_v,
-                             "mit": f"{pref} {data['msg']}", "ris": "VALIDATO", "op": st.session_state.op_name,
-                             "pos": data.get("pos"), "foto": data.get("foto")}
-                        )
-                        st.session_state.squadre[sq_in]["stato"] = st_v
-                        st.session_state.inbox.pop(i)
-                        save_data_to_disk()
-                        st.rerun()
-
-                    if cb2.button("🗑️ SCARTA", key=f"sc_{i}"):
-                        st.session_state.inbox.pop(i)
-                        save_data_to_disk()
-                        st.rerun()
-
-            st.markdown("</div>", unsafe_allow_html=True)
-
-        # ✅ MAPPA (sotto gli invii)
         st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
         df_all = pd.DataFrame(st.session_state.brogliaccio)
         m = build_folium_map_from_df(df_all, center=st.session_state.pos_mappa, zoom=14)
         st_folium(m, width="100%", height=450)
         st.markdown("</div>", unsafe_allow_html=True)
 
-        # ✅ SCHEDA ALFABETO NATO (chiara) sotto la mappa
-        st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
-        st.subheader("🧾 Alfabeto NATO (fonetico)")
-        nato = [
-            ("A", "Alfa"), ("B", "Bravo"), ("C", "Charlie"), ("D", "Delta"), ("E", "Echo"), ("F", "Foxtrot"),
-            ("G", "Golf"), ("H", "Hotel"), ("I", "India"), ("J", "Juliett"), ("K", "Kilo"), ("L", "Lima"),
-            ("M", "Mike"), ("N", "November"), ("O", "Oscar"), ("P", "Papa"), ("Q", "Quebec"), ("R", "Romeo"),
-            ("S", "Sierra"), ("T", "Tango"), ("U", "Uniform"), ("V", "Victor"), ("W", "Whiskey"), ("X", "X-ray"),
-            ("Y", "Yankee"), ("Z", "Zulu"),
-        ]
-
-        # tabella chiara in 2 colonne (A-M / N-Z)
-        left = nato[:13]
-        right = nato[13:]
-        cA, cB = st.columns(2)
-
-        dfA = pd.DataFrame(left, columns=["Lettera", "Codice"])
-        dfB = pd.DataFrame(right, columns=["Lettera", "Codice"])
-
-        cA.dataframe(dfA, use_container_width=True, hide_index=True, height=460)
-        cB.dataframe(dfB, use_container_width=True, hide_index=True, height=460)
-
-        st.markdown("</div>", unsafe_allow_html=True)
-
-
 with t_rep:
     st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
-    st.subheader("📊 Report per Squadra")
+    st.subheader("ðŸ“Š Report per Squadra")
 
     df = pd.DataFrame(st.session_state.brogliaccio)
     filtro = st.selectbox("Seleziona squadra:", ["TUTTE"] + list(st.session_state.squadre.keys()), index=0)
 
-    st.markdown("#### 📞 Rubrica Squadre (Caposquadra / Telefono)")
+    st.markdown("#### ðŸ“ž Rubrica Squadre (Caposquadra / Telefono)")
     rubrica = []
     for sq_name, inf in st.session_state.squadre.items():
         rubrica.append({
             "SQUADRA": sq_name,
-            "CAPOSQUADRA": (inf.get("capo") or "").strip() or "—",
-            "TELEFONO": (inf.get("tel") or "").strip() or "—",
+            "CAPOSQUADRA": (inf.get("capo") or "").strip() or "â€”",
+            "TELEFONO": (inf.get("tel") or "").strip() or "â€”",
             "STATO": inf.get("stato", "In attesa al COC")
         })
     st.dataframe(pd.DataFrame(rubrica), use_container_width=True, height=220)
@@ -1468,14 +1392,14 @@ with t_rep:
 
         st.divider()
         csv = df_f.to_csv(index=False).encode("utf-8")
-        st.download_button("⬇️ Scarica CSV filtrato", data=csv, file_name="brogliaccio.csv", mime="text/csv")
+        st.download_button("â¬‡ï¸ Scarica CSV filtrato", data=csv, file_name="brogliaccio.csv", mime="text/csv")
 
-    # ✅ HTML REPORT con selettori:
+    # âœ… HTML REPORT con selettori:
     # - squadra
     # - stampa con/senza mappa
     # - mappa: ultime posizioni / tutti eventi / percorso
     st.divider()
-    st.subheader("🖨️ Report HTML (stampa con/senza mappa + selettore mappa eventi squadra)")
+    st.subheader("ðŸ–¨ï¸ Report HTML (stampa con/senza mappa + selettore mappa eventi squadra)")
 
     meta = {
         "ev_data": str(st.session_state.ev_data),
@@ -1493,19 +1417,19 @@ with t_rep:
     )
 
     st.download_button(
-        "⬇️ Scarica REPORT HTML (mappa stampabile + selettore)",
+        "â¬‡ï¸ Scarica REPORT HTML (mappa stampabile + selettore)",
         data=html_bytes,
         file_name="report_radio_manager.html",
         mime="text/html",
     )
 
-    st.caption("Apri l'HTML → scegli squadra → scegli modalità mappa (Ultime/Tutti/Percorso) → STAMPA con/senza mappa.")
+    st.caption("Apri l'HTML â†’ scegli squadra â†’ scegli modalitÃ  mappa (Ultime/Tutti/Percorso) â†’ STAMPA con/senza mappa.")
     st.markdown("</div>", unsafe_allow_html=True)
 
 # =========================
 # REGISTRO EVENTI + MAPPA
 # =========================
-st.markdown("### 📋 REGISTRO EVENTI")
+st.markdown("### ðŸ“‹ REGISTRO EVENTI")
 
 if st.session_state.open_map_event is not None:
     idx = st.session_state.open_map_event
@@ -1514,20 +1438,20 @@ if st.session_state.open_map_event is not None:
         pos = row.get("pos")
 
         st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
-        st.subheader("🗺️ Mappa evento selezionato")
+        st.subheader("ðŸ—ºï¸ Mappa evento selezionato")
 
         if isinstance(pos, list) and len(pos) == 2:
             m_ev = folium.Map(location=pos, zoom_start=16)
             folium.Marker(
                 pos,
-                tooltip=f"{row.get('sq','')} · {row.get('st','')}",
+                tooltip=f"{row.get('sq','')} Â· {row.get('st','')}",
                 icon=folium.Icon(color=COLORI_STATI.get(row.get("st",""), {}).get("color", "blue")),
             ).add_to(m_ev)
             st_folium(m_ev, width="100%", height=420)
         else:
             st.info("Evento senza coordinate GPS (OMISSIS).")
 
-        if st.button("❌ CHIUDI MAPPA", key="close_event_map"):
+        if st.button("âŒ CHIUDI MAPPA", key="close_event_map"):
             st.session_state.open_map_event = None
             st.rerun()
 
@@ -1537,7 +1461,7 @@ for i, b in enumerate(st.session_state.brogliaccio):
     gps_ok = isinstance(b.get("pos"), list) and len(b["pos"]) == 2
     gps_t = f"GPS: {b['pos'][0]:.4f}, {b['pos'][1]:.4f}" if gps_ok else "GPS: OMISSIS"
     a, c = call_flow_from_row(b)
-    titolo = f"{b.get('ora','')} | 📞 {a} ➜ 🎧 {c} | {b.get('sq','')} | {gps_t}"
+    titolo = f"{b.get('ora','')} | ðŸ“ž {a} âžœ ðŸŽ§ {c} | {b.get('sq','')} | {gps_t}"
 
     with st.expander(titolo):
         st.markdown(chip_call_flow(b), unsafe_allow_html=True)
@@ -1546,32 +1470,32 @@ for i, b in enumerate(st.session_state.brogliaccio):
         sq_event = (b.get("sq") or "").strip()
         if sq_event and sq_event in st.session_state.squadre:
             inf = get_squadra_info(sq_event)
-            st.markdown(f"**👤 Caposquadra:** {inf['capo'] or '—'} &nbsp;&nbsp; | &nbsp;&nbsp; **📞 Tel:** {inf['tel'] or '—'}")
+            st.markdown(f"**ðŸ‘¤ Caposquadra:** {inf['capo'] or 'â€”'} &nbsp;&nbsp; | &nbsp;&nbsp; **ðŸ“ž Tel:** {inf['tel'] or 'â€”'}")
 
         st.write(
-            f"💬 **MSG:** {b.get('mit','')}  \n"
-            f"📩 **RIS:** {b.get('ris','')}  \n"
-            f"👤 **OP:** {b.get('op','')}"
+            f"ðŸ’¬ **MSG:** {b.get('mit','')}  \n"
+            f"ðŸ“© **RIS:** {b.get('ris','')}  \n"
+            f"ðŸ‘¤ **OP:** {b.get('op','')}"
         )
 
         col_a, col_b = st.columns([1, 2])
         if gps_ok:
-            if col_a.button("🗺️ APRI MAPPA VISIVA", key=f"open_map_{i}"):
+            if col_a.button("ðŸ—ºï¸ APRI MAPPA VISIVA", key=f"open_map_{i}"):
                 st.session_state.open_map_event = i
                 st.rerun()
             col_b.caption("Apre una mappa dedicata in alto al registro (una alla volta).")
         else:
-            col_a.button("🗺️ MAPPA NON DISPONIBILE", key=f"no_map_{i}", disabled=True)
+            col_a.button("ðŸ—ºï¸ MAPPA NON DISPONIBILE", key=f"no_map_{i}", disabled=True)
             col_b.caption("Coordinate non presenti (OMISSIS).")
 
 # =========================
 # RESET
 # =========================
 st.divider()
-st.subheader("💾 Gestione Memoria Dati")
+st.subheader("ðŸ’¾ Gestione Memoria Dati")
 col_m1, col_m2 = st.columns(2)
 
-if col_m1.button("🧹 CANCELLA TUTTI I DATI"):
+if col_m1.button("ðŸ§¹ CANCELLA TUTTI I DATI"):
     d = default_state_payload()
     st.session_state.brogliaccio = d["brogliaccio"]
     st.session_state.inbox = d["inbox"]
@@ -1590,6 +1514,6 @@ if col_m1.button("🧹 CANCELLA TUTTI I DATI"):
     st.success("Tutti i dati sono stati cancellati.")
     st.rerun()
 
-if col_m2.button("💾 SALVA ORA SU DISCO"):
+if col_m2.button("ðŸ’¾ SALVA ORA SU DISCO"):
     save_data_to_disk()
     st.success("Salvato.")

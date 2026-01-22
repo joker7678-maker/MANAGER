@@ -1489,17 +1489,32 @@ with t_rad:
         </div>""", unsafe_allow_html=True)
 
         else:
-            nato_in = st.text_input(
-                "Scrivi le parole NATO",
-                placeholder="Es. Delta Alfa Victor India Delta Echo",
-                key="nato_input_nato",
-            )
-            if nato_in.strip():
-                out = nato_phrase_to_text(nato_in)
-                st.success(f"✅ Frase: **{out}**")
-                st.caption("Puoi separare con spazi, | oppure / (es. Delta|Alfa|Victor).")
+            # stato persistente della frase (composizione con tastiera)
+            if "nato_phrase" not in st.session_state:
+                st.session_state.nato_phrase = ""
+
+            st.markdown("### 🅰️ Tastiera NATO")
+
+            letters = list(NATO.keys())
+            rows = [letters[i:i+7] for i in range(0, len(letters), 7)]
+
+            for row in rows:
+                cols = st.columns(len(row))
+                for c, letter in zip(cols, row):
+                    if c.button(letter, use_container_width=True):
+                        st.session_state.nato_phrase += letter
+
+            c1, c2 = st.columns(2)
+            if c1.button("⌫ Cancella ultimo", use_container_width=True):
+                st.session_state.nato_phrase = st.session_state.nato_phrase[:-1]
+            if c2.button("🔄 Reset", use_container_width=True):
+                st.session_state.nato_phrase = ""
+
+            if st.session_state.nato_phrase:
+                st.success(f"✅ Frase: **{st.session_state.nato_phrase}**")
+                st.caption("Composizione tramite tastiera NATO (A–Z).")
             else:
-                st.caption("Scrivi una sequenza NATO per convertirla in testo.")
+                st.caption("Clicca le lettere per comporre la frase.")
         st.markdown("</div>", unsafe_allow_html=True)
 
 with t_rep:

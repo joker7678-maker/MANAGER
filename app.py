@@ -1306,201 +1306,196 @@ with st.sidebar:
         st.markdown("## 👥 SQUADRE")
         st.caption(f"Totale: **{len(st.session_state.squadre)}**")
 
+        # --- SQUADRE (sidebar) - schede robuste con pulsanti Streamlit (no expander nativi) ---
+        st.markdown("""
+<style>
+/* === SIDEBAR: schede squadre (leggibili anche in dark-mode OS) === */
+section[data-testid="stSidebar"] .pc-sq-card{
+  background: #e7f0ff !important;   /* blu chiaro */
+  border: 1px solid rgba(2,6,23,.14) !important;
+  border-radius: 16px !important;
+  box-shadow: 0 10px 22px rgba(2,6,23,.10) !important;
+  padding: 12px 12px 10px 12px !important;
+  margin: 10px 0 !important;
+  color: #0b1220 !important;
+}
+section[data-testid="stSidebar"] .pc-sq-head{
+  display:flex; align-items:center; gap:10px;
+}
+section[data-testid="stSidebar"] .pc-sq-dot{
+  width: 12px; height: 12px; border-radius: 999px;
+  display:inline-block;
+  box-shadow: 0 0 0 3px rgba(255,255,255,.70);
+  border: 1px solid rgba(2,6,23,.18);
+}
+section[data-testid="stSidebar"] .pc-sq-name{
+  font-weight: 950; color:#0b1220;
+  letter-spacing:.2px;
+}
+section[data-testid="stSidebar"] .pc-sq-sub{
+  margin-top: 6px;
+  color: #0b1220 !important;
+  font-weight: 700;
+  font-size: .92rem;
+  line-height: 1.25rem;
+}
+section[data-testid="stSidebar"] .pc-sq-sub b{ font-weight: 950; }
 
-        # --- SQUADRE (sidebar) - lista HTML robusta (non dipende dagli expander Streamlit) ---
-        st.markdown("""<style>
-        /* Lista squadre in SIDEBAR: card blu chiaro + testi scuri + chevron bianco */
-        .pc-squad-html { margin-top: 6px; }
-        .pc-squad-item{
-          background: #e7f0ff;
-          border: 1px solid rgba(2,6,23,.12);
-          border-radius: 16px;
-          box-shadow: 0 10px 22px rgba(2,6,23,.10);
-          overflow: hidden;
-          margin: 10px 0;
-        }
-        .pc-squad-item > summary{
-          list-style: none;
-          cursor: pointer;
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          padding: 14px 14px;
-          color: #0b1220;
-          font-weight: 950;
-        }
-        .pc-squad-spacer{ flex: 1 1 auto; }
-        .pc-pencil{
-          width: 32px; height: 32px;
-          display: inline-flex; align-items:center; justify-content:center;
-          border-radius: 12px;
-          background: rgba(255,255,255,.75);
-          border: 1px solid rgba(2,6,23,.14);
-          color: #0b1220;
-          text-decoration: none;
-          font-size: 16px;
-          font-weight: 900;
-        }
-        .pc-pencil:hover{ background: #ffffff; }
-        .pc-pencil:active{ transform: translateY(1px); }
-        .pc-squad-item > summary::-webkit-details-marker { display:none; }
-        .pc-chev{
-          width: 30px; height: 30px;
-          display: inline-flex; align-items:center; justify-content:center;
-          border-radius: 999px;
-          background: rgba(13,71,161,.85);
-          color: #fff;
-          font-size: 20px;
-          line-height: 1;
-          flex: 0 0 30px;
-        }
-        .pc-squad-item[open] .pc-chev{ transform: rotate(90deg); transition: transform .12s ease; }
-        .pc-dot{
-          width: 12px; height: 12px; border-radius: 999px;
-          display: inline-block;
-          box-shadow: 0 0 0 3px rgba(255,255,255,.65);
-          flex: 0 0 12px;
-        }
-        .pc-dot-green{ background:#22c55e; }
-        .pc-dot-yellow{ background:#f59e0b; }
-        .pc-dot-red{ background:#ef4444; }
-        .pc-dot-blue{ background:#3b82f6; }
-        .pc-dot-purple{ background:#a855f7; }
-        .pc-dot-orange{ background:#f97316; }
-        .pc-dot-gray{ background:#64748b; }
+section[data-testid="stSidebar"] .pc-iconbtn > button{
+  width: 36px !important;
+  height: 36px !important;
+  padding: 0 !important;
+  border-radius: 12px !important;
+  border: 1px solid rgba(255,255,255,.18) !important;
+  background: rgba(13,71,161,.92) !important;
+  color: #ffffff !important;
+  font-weight: 950 !important;
+  box-shadow: 0 8px 18px rgba(2,6,23,.12) !important;
+}
+section[data-testid="stSidebar"] .pc-iconbtn.pencil > button{
+  background: rgba(255,255,255,.82) !important;
+  border: 1px solid rgba(2,6,23,.16) !important;
+  color: #0b1220 !important;
+}
+section[data-testid="stSidebar"] .pc-actions .stButton > button{
+  width: 100% !important;
+  border-radius: 12px !important;
+  font-weight: 950 !important;
+}
+</style>
+""", unsafe_allow_html=True)
 
-        .pc-squad-body{
-          background: rgba(255,255,255,.65);
-          padding: 10px 14px 14px 14px;
-          color: #0b1220;
-          font-weight: 600;
-          border-top: 1px solid rgba(2,6,23,.10);
-        }
-        .pc-squad-row{ margin: 6px 0; }
-        .pc-squad-row b{ font-weight: 950; }
-        .pc-squad-note{
-          margin-top: 10px;
-          font-size: .82rem;
-          color: #334155;
-        }
-        </style>""", unsafe_allow_html=True)
-
-        def _dot_class(stato: str) -> str:
-            s = (stato or "").lower()
-            if any(k in s for k in ["conclus", "rientr", "ok"]): return "pc-dot-green"
-            if any(k in s for k in ["in corso", "intervento", "emerg", "urgen"]): return "pc-dot-red"
-            if any(k in s for k in ["spost", "partit", "in viaggio", "verso"]): return "pc-dot-yellow"
-            if any(k in s for k in ["drone", "aereo", "volo"]): return "pc-dot-blue"
-            if any(k in s for k in ["idrov", "pomp", "allag"]): return "pc-dot-purple"
-            if any(k in s for k in ["sopralluog", "valutaz", "ricogn"]): return "pc-dot-orange"
-            return "pc-dot-gray"
+        if "sidebar_sq_open" not in st.session_state:
+            st.session_state.sidebar_sq_open = None
+        if "sidebar_actions_open" not in st.session_state:
+            st.session_state.sidebar_actions_open = None
 
         squadre_sorted = sorted(list(st.session_state.squadre.keys()))
-        html_parts = ["<div class='pc-squad-html'>"]
+
         for team in squadre_sorted:
-            inf = get_squadra_info(team)
-            capo_txt = (inf.get("capo") or "—")
-            tel_txt = (inf.get("tel") or "—")
-            stato_txt = (inf.get("stato") or "—")
-            dot = _dot_class(stato_txt)
-            # NB: niente input/widget qui dentro: è solo UI robusta e leggibile
-            html_parts.append(
-                f"""<details class='pc-squad-item'>
-                    <summary>
-                      <span class='pc-chev'>›</span>
-                      <span class='pc-dot {dot}'></span>
-                      <span>{team}</span>
-                      <span class='pc-squad-spacer'></span>
-                      <a class='pc-pencil' href='#gestisci' title='Modifica / QR'>✏️</a>
-                    </summary>
-                    <div class='pc-squad-body'>
-                      <div class='pc-squad-row'><b>Stato:</b> {stato_txt}</div>
-                      <div class='pc-squad-row'><b>Capo:</b> {capo_txt}</div>
-                      <div class='pc-squad-row'><b>Tel:</b> {tel_txt}</div>
-                      <div class='pc-squad-note'>Per modifiche / QR usa “Gestisci squadra” qui sotto.</div>
-                    </div>
-                  </details>"""
-            )
-        html_parts.append("</div>")
-        st.markdown("\n".join(html_parts), unsafe_allow_html=True)
-
-        st.divider()
-        st.markdown("<div id='gestisci'></div>", unsafe_allow_html=True)
-        st.markdown("### ⚙️ Gestisci squadra")
-        sel_team = st.selectbox(
-            "Seleziona squadra",
-            options=[""] + squadre_sorted,
-            index=0,
-            key="sidebar_manage_team",
-            help="Seleziona una squadra per modificare dati, generare QR o eliminare."
-        )
-
-        if sel_team:
-            team = sel_team
             inf = get_squadra_info(team)
             capo_txt = inf["capo"] if inf["capo"] else "—"
             tel_txt = inf["tel"] if inf["tel"] else "—"
+            stato_txt = inf.get("stato") or "—"
+            stato_hex = COLORI_STATI.get(stato_txt, {}).get("hex", "#64748b")
 
-            st.markdown(chip_stato(inf["stato"]), unsafe_allow_html=True)
-            st.markdown(f"**👤 Capo:** {capo_txt}")
-            st.markdown(f"**📞 Tel:** {tel_txt}")
+            # CARD WRAP
+            st.markdown("<div class='pc-sq-card'>", unsafe_allow_html=True)
 
-            b1, b2 = st.columns(2)
-            if b1.button("✏️ MODIFICA", key=f"btn_edit_{team}"):
-                st.session_state.team_edit_open = team
-                st.session_state.team_qr_open = None
-                st.rerun()
-            if b2.button("📱 QR", key=f"btn_qr_{team}"):
-                st.session_state.team_qr_open = team
-                st.session_state.team_edit_open = None
-                st.rerun()
+            # HEADER: chevron + nome + matita
+            c_chev, c_name, c_pen = st.columns([0.18, 1, 0.18], gap="small")
+            with c_chev:
+                st.markdown("<div class='pc-iconbtn'>", unsafe_allow_html=True)
+                chevlab = "▾" if st.session_state.sidebar_sq_open == team else "▸"
+                if st.button(chevlab, key=f"sq_open_{team}", help="Apri/chiudi scheda"):
+                    st.session_state.sidebar_sq_open = None if st.session_state.sidebar_sq_open == team else team
+                    # se chiudo la scheda, chiudo anche le azioni
+                    if st.session_state.sidebar_sq_open != team:
+                        if st.session_state.sidebar_actions_open == team:
+                            st.session_state.sidebar_actions_open = None
+                    st.rerun()
+                st.markdown("</div>", unsafe_allow_html=True)
 
-            if st.session_state.get("team_edit_open") == team:
-                st.divider()
-                st.markdown("#### ✏️ Modifica squadra")
-                with st.form(f"form_edit_{team}"):
-                    new_name = st.text_input("Nome squadra", value=team)
-                    new_capo = st.text_input("Caposquadra", value=inf["capo"])
-                    new_tel = st.text_input("Telefono", value=inf["tel"])
-                    save = st.form_submit_button("💾 SALVA MODIFICHE")
-                if save:
-                    ok, msg = update_team(team, new_name, new_capo, new_tel)
-                    (st.success if ok else st.warning)(msg)
-                    if ok:
+            with c_name:
+                st.markdown(
+                    f"<div class='pc-sq-head'>"
+                    f"<span class='pc-sq-dot' style='background:{stato_hex};'></span>"
+                    f"<span class='pc-sq-name'>{team}</span>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+
+            with c_pen:
+                st.markdown("<div class='pc-iconbtn pencil'>", unsafe_allow_html=True)
+                if st.button("✏️", key=f"sq_act_{team}", help="Apri azioni (Modifica / QR / Elimina)"):
+                    # apre scheda + azioni inline
+                    st.session_state.sidebar_sq_open = team
+                    st.session_state.sidebar_actions_open = None if st.session_state.sidebar_actions_open == team else team
+                    # reset pannelli globali (sicurezza)
+                    st.session_state.team_edit_open = None if st.session_state.team_edit_open == team else st.session_state.team_edit_open
+                    st.session_state.team_qr_open = None if st.session_state.team_qr_open == team else st.session_state.team_qr_open
+                    st.rerun()
+                st.markdown("</div>", unsafe_allow_html=True)
+
+            # BODY (collassabile)
+            if st.session_state.sidebar_sq_open == team:
+                st.markdown(
+                    f"<div class='pc-sq-sub'><b>Stato:</b> {stato_txt}<br/>"
+                    f"<b>Capo:</b> {capo_txt}<br/>"
+                    f"<b>Tel:</b> {tel_txt}</div>",
+                    unsafe_allow_html=True
+                )
+
+                # ACTIONS inline
+                if st.session_state.sidebar_actions_open == team:
+                    st.divider()
+                    st.markdown("<div class='pc-actions'>", unsafe_allow_html=True)
+                    b1, b2 = st.columns(2)
+                    if b1.button("✏️ MODIFICA", key=f"btn_edit_{team}"):
+                        st.session_state.team_edit_open = team
+                        st.session_state.team_qr_open = None
+                        st.rerun()
+                    if b2.button("📱 QR", key=f"btn_qr_{team}"):
+                        st.session_state.team_qr_open = team
                         st.session_state.team_edit_open = None
                         st.rerun()
 
-            if st.session_state.get("team_qr_open") == team:
-                st.divider()
-                st.markdown("#### 📱 QR accesso caposquadra")
-                base_url = (st.session_state.get("BASE_URL") or "").strip().rstrip("/")
-                token = st.session_state.squadre[team].get("token", "")
-                if not base_url.startswith("http"):
-                    st.warning("⚠️ Imposta l'URL base: https://…streamlit.app")
-                else:
-                    link = f"{base_url}/?mode=campo&team={team}&token={token}"
-                    st.code(link, language="text")
-                    png = qr_png_bytes(link)
-                    st.image(png, width=230)
-                    st.download_button(
-                        "⬇️ Scarica QR (PNG)",
-                        data=png,
-                        file_name=f"QR_{team.replace(' ', '_')}.png",
-                        mime="image/png",
-                        key=f"dlqr_{team}",
-                    )
-                if st.button("❌ Chiudi QR", key=f"closeqr_{team}"):
-                    st.session_state.team_qr_open = None
-                    st.rerun()
+                    if st.session_state.get("team_edit_open") == team:
+                        st.divider()
+                        st.markdown("#### ✏️ Modifica squadra")
+                        with st.form(f"form_edit_{team}"):
+                            new_name = st.text_input("Nome squadra", value=team)
+                            new_capo = st.text_input("Caposquadra", value=inf["capo"])
+                            new_tel = st.text_input("Telefono", value=inf["tel"])
+                            save = st.form_submit_button("💾 SALVA MODIFICHE")
+                        if save:
+                            ok, msg = update_team(team, new_name, new_capo, new_tel)
+                            (st.success if ok else st.warning)(msg)
+                            if ok:
+                                st.session_state.team_edit_open = None
+                                st.rerun()
 
-            st.divider()
-            conferma = st.checkbox("Confermo eliminazione squadra", key=f"confdel_{team}")
-            if st.button("🗑️ ELIMINA SQUADRA", key=f"del_{team}", disabled=not conferma):
-                ok, msg = delete_team(team)
-                (st.success if ok else st.warning)(msg)
-                st.rerun()
+                        st.caption("Se il QR è stato condiviso per errore, rigenera il token.")
+                        if st.button("♻️ Rigenera Token", key=f"regen_{team}"):
+                            regenerate_team_token(team)
+                            st.success("Token rigenerato ✅")
+                            st.rerun()
 
+                    if st.session_state.get("team_qr_open") == team:
+                        st.divider()
+                        st.markdown("#### 📱 QR accesso caposquadra")
 
+                        base_url = (st.session_state.get("BASE_URL") or "").strip().rstrip("/")
+                        token = st.session_state.squadre[team].get("token", "")
+
+                        if not base_url.startswith("http"):
+                            st.warning("⚠️ Imposta l'URL base: https://…streamlit.app")
+                        else:
+                            link = f"{base_url}/?mode=campo&team={team}&token={token}"
+                            st.code(link, language="text")
+                            png = qr_png_bytes(link)
+                            st.image(png, width=230)
+                            st.download_button(
+                                "⬇️ Scarica QR (PNG)",
+                                data=png,
+                                file_name=f"QR_{team.replace(' ', '_')}.png",
+                                mime="image/png",
+                                key=f"dlqr_{team}",
+                            )
+
+                        if st.button("❌ Chiudi QR", key=f"closeqr_{team}"):
+                            st.session_state.team_qr_open = None
+                            st.rerun()
+
+                    st.divider()
+                    conferma = st.checkbox("Confermo eliminazione squadra", key=f"confdel_{team}")
+                    if st.button("🗑️ ELIMINA SQUADRA", key=f"del_{team}", disabled=not conferma):
+                        ok, msg = delete_team(team)
+                        (st.success if ok else st.warning)(msg)
+                        st.rerun()
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+            st.markdown("</div>", unsafe_allow_html=True)
 
         st.divider()
         st.markdown("## ➕ CREA SQUADRA")

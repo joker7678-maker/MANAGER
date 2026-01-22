@@ -158,6 +158,16 @@ def qr_png_bytes(url: str) -> bytes:
     img.save(buf, format="PNG")
     return buf.getvalue()
 
+def folium_inline_parts(m: folium.Map) -> Tuple[str, str]:
+    """
+    Estrae header (css/js) e body (div+script) della mappa,
+    evitando iframe: più affidabile in stampa HTML.
+    """
+    root = m.get_root()
+    header = root.header.render()
+    body = root.html.render() + root.script.render()
+    return header, body
+
 def make_html_report_bytes(
     squads: Dict[str, Any],
     brogliaccio: list,
@@ -174,9 +184,13 @@ def make_html_report_bytes(
             return "<div class='muted'>Nessun dato presente.</div>"
         return df_view.to_html(index=False, classes="tbl", escape=True)
 
-    def _folium_html_for_df(df: pd.DataFrame) -> str:
+    folium_headers = []
+
+    def _folium_body_for_df(df: pd.DataFrame) -> str:
         m = build_folium_map_from_df(df, center=center, zoom=14)
-        return m.get_root().render()
+        h, b = folium_inline_parts(m)
+        folium_headers.append(h)
+        return b
 
     ev_data = _safe(str(meta.get("ev_data", "")))
     ev_tipo = _safe(str(meta.get("ev_tipo", "")))
@@ -187,9 +201,12 @@ def make_html_report_bytes(
     sections_html = []
     options_html = ["<option value='TUTTE'>TUTTE</option>"]
 
+    # TUTTE
     df_view_tot = df_for_report(df_all) if not df_all.empty else pd.DataFrame()
     tab_tot = _df_to_html_table(df_view_tot)
-    map_tot = _folium_html_for_df(df_all) if not df_all.empty else "<div class='muted'>Mappa non disponibile.</div>"
+
+    # mappa totale: sempre creata (se c'è almeno un log)
+    map_tot = _folium_body_for_df(df_all) if not df_all.empty else "<div class='muted'>Mappa non disponibile.</div>"
 
     sections_html.append(f"""
       <section class="rep" id="rep_TUTTE">
@@ -202,13 +219,16 @@ def make_html_report_bytes(
         </div>
         <div class="desc"><b>Descrizione:</b> {ev_desc}</div>
         <hr/>
-        <div class="h3">📍 MAPPA</div>
-        <div class="mapwrap">{map_tot}</div>
+        <div class="mapblock">
+          <div class="h3">📍 MAPPA</div>
+          <div class="mapwrap">{map_tot}</div>
+        </div>
         <div class="h3">📋 LOG</div>
         {tab_tot}
       </section>
     """)
 
+    # SQUADRE
     for sq in sorted(list(squads.keys())):
         options_html.append(f"<option value='{_safe(sq)}'>{_safe(sq)}</option>")
         if df_all.empty:
@@ -226,7 +246,7 @@ def make_html_report_bytes(
                     has_pos = True
                     break
 
-        map_sq = _folium_html_for_df(df_sq) if (not df_sq.empty and has_pos) else "<div class='muted'>Mappa non disponibile (nessun GPS).</div>"
+        map_sq = _folium_body_for_df(df_sq) if (not df_sq.empty and has_pos) else "<div class='muted'>Mappa non disponibile (nessun GPS).</div>"
 
         capo = _safe((squads.get(sq, {}) or {}).get("capo", "") or "—")
         tel = _safe((squads.get(sq, {}) or {}).get("tel", "") or "—")
@@ -248,12 +268,17 @@ def make_html_report_bytes(
             </div>
             <div class="desc"><b>Descrizione:</b> {ev_desc}</div>
             <hr/>
-            <div class="h3">📍 MAPPA</div>
-            <div class="mapwrap">{map_sq}</div>
+            <div class="mapblock">
+              <div class="h3">📍 MAPPA</div>
+              <div class="mapwrap">{map_sq}</div>
+            </div>
             <div class="h3">📋 LOG</div>
             {tab_sq}
           </section>
         """)
+
+    # togli duplicati header folium
+    folium_headers_unique = "".join(dict.fromkeys(folium_headers))
 
     html = f"""<!doctype html>
 <html lang="it">
@@ -302,6 +327,18 @@ def make_html_report_bytes(
     background: #334155;
   }}
 
+  .toggle {{
+    display:flex; align-items:center; gap:10px;
+    background: rgba(255,255,255,.10);
+    border: 1px solid rgba(255,255,255,.18);
+    padding: 10px 12px; border-radius: 12px;
+    font-weight: 900;
+  }}
+  .toggle input[type="checkbox"] {{
+    width: 18px; height: 18px;
+    accent-color: #fbbf24;
+  }}
+
   .rep {{
     margin-top: 14px; background: var(--card);
     border: 1px solid var(--border); border-radius: 16px;
@@ -343,12 +380,13 @@ def make_html_report_bytes(
     overflow: hidden;
     background: #fff;
   }}
-  .mapwrap iframe {{
+  /* Leaflet container dentro folium */
+  .folium-map {{
     width: 100% !important;
-    height: 420px !important;
-    border: 0 !important;
+    height: 440px !important;
   }}
 
+  /* Print: nasconde controlli, stampa SOLO la sezione selezionata */
   @media print {{
     body {{ background: white; }}
     .top .controls {{ display:none !important; }}
@@ -357,23 +395,34 @@ def make_html_report_bytes(
     .rep {{ display:none; }}
     .rep.printme {{ display:block !important; }}
     .tbl th {{ position: static; }}
-    .mapwrap iframe {{ height: 520px !important; }}
+    .folium-map {{ height: 520px !important; }}
+    /* se stampa senza mappa */
+    .no-map .mapblock {{ display:none !important; }}
   }}
 </style>
+
+{folium_headers_unique}
+
 </head>
 
 <body>
   <div class="wrap">
     <div class="top">
       <div class="title">Protezione Civile Thiene — Report Radio Manager</div>
-      <div class="sub">Seleziona cosa stampare. La stampa include la mappa della sezione scelta.</div>
+      <div class="sub">Seleziona cosa stampare. Puoi stampare con mappa oppure senza mappa.</div>
 
       <div class="controls">
         <label for="sel">Seleziona stampa:</label>
         <select id="sel" onchange="showSection()">
           {''.join(options_html)}
         </select>
-        <button class="btn" onclick="doPrint()">🖨️ STAMPA (con mappa)</button>
+
+        <div class="toggle">
+          <input id="chkMap" type="checkbox" checked onchange="toggleMapClass()"/>
+          <span>Stampa con mappa</span>
+        </div>
+
+        <button class="btn" onclick="doPrint()">🖨️ STAMPA</button>
         <button class="btn secondary" onclick="showAll()">👁️ Mostra tutto</button>
       </div>
     </div>
@@ -398,6 +447,7 @@ def make_html_report_bytes(
       sec.classList.add('printme');
       window.scrollTo(0, sec.offsetTop - 10);
     }}
+    toggleMapClass();
   }}
 
   function showAll(){{
@@ -405,12 +455,27 @@ def make_html_report_bytes(
       s.classList.remove('printme');
       s.style.display = 'block';
     }});
+    toggleMapClass();
     window.scrollTo(0, 0);
+  }}
+
+  function toggleMapClass(){{
+    const withMap = document.getElementById('chkMap').checked;
+    const body = document.body;
+    if(withMap){{
+      body.classList.remove('no-map');
+    }} else {{
+      body.classList.add('no-map');
+    }}
   }}
 
   function doPrint(){{
     showSection();
-    window.print();
+
+    // Attendi un attimo per far caricare/renderizzare bene Leaflet prima della stampa
+    setTimeout(() => {{
+      window.print();
+    }}, 1200);
   }}
 
   (function init(){{
@@ -437,6 +502,7 @@ def default_state_payload():
         "ev_tipo": "Emergenza",
         "ev_nome": "",
         "ev_desc": "",
+        "BASE_URL": "",
     }
 
 def save_data_to_disk():
@@ -450,6 +516,7 @@ def save_data_to_disk():
         "ev_tipo": st.session_state.ev_tipo,
         "ev_nome": st.session_state.ev_nome,
         "ev_desc": st.session_state.ev_desc,
+        "BASE_URL": st.session_state.get("BASE_URL", ""),
     }
     with open(DATA_PATH, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
@@ -472,6 +539,7 @@ def load_data_from_disk():
     st.session_state.ev_tipo = payload.get("ev_tipo", "Emergenza")
     st.session_state.ev_nome = payload.get("ev_nome", "")
     st.session_state.ev_desc = payload.get("ev_desc", "")
+    st.session_state.BASE_URL = payload.get("BASE_URL", "") or ""
     return True
 
 def load_data_from_uploaded_json(file_bytes: bytes):
@@ -485,6 +553,7 @@ def load_data_from_uploaded_json(file_bytes: bytes):
     st.session_state.ev_tipo = payload.get("ev_tipo", "Emergenza")
     st.session_state.ev_nome = payload.get("ev_nome", "")
     st.session_state.ev_desc = payload.get("ev_desc", "")
+    st.session_state.BASE_URL = payload.get("BASE_URL", "") or ""
     save_data_to_disk()
 
 # =========================
@@ -495,7 +564,6 @@ if "initialized" not in st.session_state:
     st.session_state.open_map_event = None
     st.session_state.team_edit_open = None
     st.session_state.team_qr_open = None
-    st.session_state.BASE_URL = st.session_state.get("BASE_URL", "")
 
     ok = load_data_from_disk()
     if not ok:
@@ -509,11 +577,28 @@ if "initialized" not in st.session_state:
         st.session_state.ev_tipo = d["ev_tipo"]
         st.session_state.ev_nome = d["ev_nome"]
         st.session_state.ev_desc = d["ev_desc"]
+        st.session_state.BASE_URL = d["BASE_URL"]
         save_data_to_disk()
 
-for s, info in st.session_state.squadre.items():
+# assicura token a tutte le squadre
+for _, info in st.session_state.squadre.items():
     if "token" not in info or not info["token"]:
         info["token"] = uuid.uuid4().hex
+
+# =========================
+# AUTO BASE URL (se disponibile)
+# opzionale: pip install streamlit-js-eval
+# =========================
+try:
+    from streamlit_js_eval import get_page_location  # type: ignore
+    loc = get_page_location()
+    if isinstance(loc, dict):
+        origin = (loc.get("origin") or "").strip().rstrip("/")
+        if origin and (not st.session_state.get("BASE_URL")):
+            st.session_state.BASE_URL = origin
+except Exception:
+    pass
+
 save_data_to_disk()
 
 # =========================
@@ -583,6 +668,7 @@ def delete_team(team: str) -> Tuple[bool, str]:
 # ACCESSO PROTETTO
 # =========================
 def require_login():
+    # Accesso diretto caposquadra via link QR
     if (
         qp_mode.lower() == "campo"
         and qp_team in st.session_state.get("squadre", {})
@@ -621,7 +707,7 @@ def require_login():
 require_login()
 
 # =========================
-# CSS
+# CSS (UI)
 # =========================
 st.markdown("""
 <style>
@@ -775,6 +861,7 @@ with st.sidebar:
                         if ok:
                             st.session_state.team_edit_open = None
                             st.rerun()
+
                     st.caption("Se il QR è stato condiviso per errore, rigenera il token.")
                     if st.button("♻️ Rigenera Token", key=f"regen_{team}"):
                         regenerate_team_token(team)
@@ -784,11 +871,12 @@ with st.sidebar:
                 if st.session_state.get("team_qr_open") == team:
                     st.divider()
                     st.markdown("### 📱 QR accesso caposquadra")
+
                     base_url = (st.session_state.get("BASE_URL") or "").strip().rstrip("/")
                     token = st.session_state.squadre[team].get("token", "")
 
                     if not base_url.startswith("http"):
-                        st.warning("⚠️ Imposta sotto l'URL base (https://…streamlit.app).")
+                        st.warning("⚠️ Imposta (o lascia auto) l'URL base: https://…streamlit.app")
                     else:
                         link = f"{base_url}/?mode=campo&team={team}&token={token}"
                         st.code(link, language="text")
@@ -801,6 +889,7 @@ with st.sidebar:
                             mime="image/png",
                             key=f"dlqr_{team}",
                         )
+
                     if st.button("❌ Chiudi QR", key=f"closeqr_{team}"):
                         st.session_state.team_qr_open = None
                         st.rerun()
@@ -840,11 +929,12 @@ with st.sidebar:
 
         st.divider()
         st.markdown("## 🌐 URL APP (per QR)")
+        st.caption("Se hai installato streamlit-js-eval si compila da solo; altrimenti incolla l'URL.")
         st.session_state.BASE_URL = st.text_input(
             "Base URL Streamlit Cloud",
             value=(st.session_state.get("BASE_URL") or ""),
             placeholder="https://nome-app.streamlit.app",
-            help="Incolla l'URL della tua app pubblicata."
+            help="URL della tua app pubblicata (serve per generare i QR)."
         ).strip()
 
     # BACKUP in fondo
@@ -860,6 +950,7 @@ with st.sidebar:
         "ev_tipo": st.session_state.ev_tipo,
         "ev_nome": st.session_state.ev_nome,
         "ev_desc": st.session_state.ev_desc,
+        "BASE_URL": st.session_state.get("BASE_URL", ""),
     }
     st.download_button(
         "⬇️ Scarica BACKUP JSON",
@@ -1104,9 +1195,9 @@ with t_rep:
         csv = df_f.to_csv(index=False).encode("utf-8")
         st.download_button("⬇️ Scarica CSV filtrato", data=csv, file_name="brogliaccio.csv", mime="text/csv")
 
-    # ✅ HTML REPORT CON STAMPA + MAPPA (tutte le squadre + selettore)
+    # ✅ HTML REPORT CON STAMPA + MAPPA (flag dentro l'HTML: con mappa / senza mappa)
     st.divider()
-    st.subheader("🖨️ Report HTML con selettore stampa + mappa")
+    st.subheader("🖨️ Report HTML con selettore stampa (con mappa / senza mappa)")
 
     meta = {
         "ev_data": str(st.session_state.ev_data),
@@ -1124,12 +1215,13 @@ with t_rep:
     )
 
     st.download_button(
-        "⬇️ Scarica REPORT HTML (con stampa e mappa)",
+        "⬇️ Scarica REPORT HTML (stampa con/senza mappa)",
         data=html_bytes,
         file_name="report_radio_manager.html",
         mime="text/html",
     )
 
+    st.caption("Apri l'HTML con Chrome/Edge → scegli squadra → spunta o togli 'Stampa con mappa' → STAMPA.")
     st.markdown("</div>", unsafe_allow_html=True)
 
 # =========================
@@ -1212,6 +1304,7 @@ if col_m1.button("🧹 CANCELLA TUTTI I DATI"):
     st.session_state.ev_tipo = d["ev_tipo"]
     st.session_state.ev_nome = d["ev_nome"]
     st.session_state.ev_desc = d["ev_desc"]
+    st.session_state.BASE_URL = d["BASE_URL"]
     st.session_state.open_map_event = None
     st.session_state.team_edit_open = None
     st.session_state.team_qr_open = None

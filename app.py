@@ -1657,3 +1657,31 @@ if col_m1.button("🧹 CANCELLA TUTTI I DATI"):
 if col_m2.button("💾 SALVA ORA SU DISCO"):
     save_data_to_disk()
     st.success("Salvato.")
+# =========================
+# FOOTER
+# =========================
+st.markdown("""
+<style>
+.pc-footer {
+    margin-top: 40px;
+    padding: 14px 10px;
+    text-align: center;
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: #475569;
+    border-top: 1px solid rgba(15,23,42,.15);
+}
+.pc-footer span {
+    margin: 0 6px;
+    white-space: nowrap;
+}
+</style>
+
+<div class="pc-footer">
+    <span>🛡️ Gruppo Comunale Volontari Protezione Civile Thiene</span> |
+    <span>📍 Via Dell'Aeroporto, 33</span> |
+    <span>✉️ pcthiene@gmail.com</span> |
+    <span>🎨 Realizzato da <b>JokArt</b></span>
+</div>
+""", unsafe_allow_html=True)
+

@@ -1028,6 +1028,39 @@ section[data-testid="stSidebar"] .stDownloadButton > button{
 .nato-word{font-size:.70rem;font-weight:850;color:#334155;}
 @media print{.nato-title,.nato-mini,.nato-spell{display:none!important;}}
 
+
+/* ====== MOBILE / SMARTPHONE OPTIMIZATION ====== */
+@media (max-width: 768px){
+  .pc-hero{ margin-top: -20px; padding: 14px 14px; flex-direction: column; align-items: flex-start; }
+  .pc-hero .title{ font-size: 1.55rem; }
+  .pc-hero .subtitle{ font-size: .95rem; }
+  .pc-logo{ width: 54px; height: 54px; border-radius: 14px; }
+  .pc-badge{ width: 100%; text-align:center; }
+  .pc-card{ padding: 14px; border-radius: 16px; }
+}
+
+/* ====== CAPOSQUADRA (SMARTPHONE) ====== */
+.capo-mode .pc-card{
+  border-radius: 18px;
+  border: 1px solid rgba(15,23,42,.14);
+  box-shadow: 0 10px 26px rgba(2,6,23,.08);
+}
+.capo-mode .stButton > button{
+  width: 100% !important;
+  border-radius: 14px !important;
+  padding: 14px 14px !important;
+  font-weight: 950 !important;
+  border: 1px solid rgba(15,23,42,.14) !important;
+}
+.capo-mode .stButton > button:hover{ filter: brightness(0.98); }
+.capo-mode textarea, .capo-mode input{
+  font-size: 16px !important; /* evita zoom iOS */
+}
+.capo-mode [data-testid="stCheckbox"] label{
+  font-weight: 900 !important;
+}
+.pc-inbox .pc-alert{ margin-bottom: 8px; }
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -1214,6 +1247,7 @@ st.markdown(
 # MODULO CAPOSQUADRA
 # =========================
 if badge_ruolo == "MODULO CAPOSQUADRA":
+    st.markdown("<div class='capo-mode'>", unsafe_allow_html=True)
     st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
     st.subheader("📱 Modulo da campo")
 
@@ -1253,6 +1287,7 @@ if badge_ruolo == "MODULO CAPOSQUADRA":
             st.success("✅ Inviato!")
 
     st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
 
 # =========================
@@ -1279,38 +1314,48 @@ c4.markdown(metric_box(COLORI_STATI["Rientrata al Coc"]["hex"], "↩️", "Rient
 c5.markdown(metric_box(COLORI_STATI["In attesa al COC"]["hex"], "🏠", "Al COC", st_lista.count("In attesa al COC")), unsafe_allow_html=True)
 
 # =========================
-# INBOX APPROVAZIONE
+# INBOX APPROVAZIONE (AVVISI) — RENDER SOPRA MAPPA
 # =========================
-if st.session_state.inbox:
-    st.markdown(f"<div class='pc-alert'>⚠️ RICEVUTI {len(st.session_state.inbox)} AGGIORNAMENTI DA VALIDARE</div>", unsafe_allow_html=True)
+def render_inbox_panel():
+    """Mostra gli avvisi da validare (una alla volta), pensato per stare sopra la mappa."""
+    if not st.session_state.get("inbox"):
+        return
 
-    for i, data in enumerate(st.session_state.inbox):
-        sq_in = data["sq"]
+    st.markdown("<div class='pc-card pc-inbox'>", unsafe_allow_html=True)
+    st.markdown(f"<div class='pc-alert'>⚠️ RICEVUTI {len(st.session_state.inbox)} AGGIORNAMENTI DA VALIDARE</div>", unsafe_allow_html=True)
+    st.caption("Apri un avviso alla volta, valida o scarta. Dopo l'azione la pagina si aggiorna automaticamente.")
+
+    # Nota: usiamo range su una copia della lunghezza, perché su APPROVA/SCARTA facciamo rerun.
+    for i in range(len(st.session_state.inbox)):
+        data = st.session_state.inbox[i]
+        sq_in = data.get("sq", "")
         inf_in = get_squadra_info(sq_in)
 
-        with st.expander(f"📥 APPROVAZIONE: {sq_in} ({data['ora']})", expanded=True):
+        # chiusi di default (li apri uno a uno)
+        with st.expander(f"📥 {sq_in} · {data.get('ora','')}", expanded=False):
             st.markdown(f"<div class='pc-flow'>📞 <b>{sq_in}</b> <span class='pc-arrow'>➜</span> 🎧 <b>SALA OPERATIVA</b></div>", unsafe_allow_html=True)
             st.markdown(f"**👤 Caposquadra:** {inf_in['capo'] or '—'} &nbsp;&nbsp; | &nbsp;&nbsp; **📞 Tel:** {inf_in['tel'] or '—'}")
 
-            st.write(f"**MSG:** {data['msg']}")
-            if data["pos"]:
+            st.write(f"**MSG:** {data.get('msg','')}")
+            if data.get("pos"):
                 st.info(f"📍 GPS acquisito: {data['pos']}")
-            if data["foto"]:
-                st.image(data["foto"], width=220)
+            if data.get("foto"):
+                st.image(data["foto"], width=260)
 
             st_v = st.selectbox("Nuovo Stato:", list(COLORI_STATI.keys()), key=f"sv_inbox_{i}")
             st.markdown(chip_stato(st_v), unsafe_allow_html=True)
 
             cb1, cb2 = st.columns(2)
             if cb1.button("✅ APPROVA", key=f"ap_{i}"):
-                pref = "[AUTO]" if data["pos"] else "[AUTO-PRIVACY]"
+                pref = "[AUTO]" if data.get("pos") else "[AUTO-PRIVACY]"
                 st.session_state.brogliaccio.insert(
                     0,
-                    {"ora": data["ora"], "chi": sq_in, "sq": sq_in, "st": st_v,
-                     "mit": f"{pref} {data['msg']}", "ris": "VALIDATO", "op": st.session_state.op_name,
-                     "pos": data["pos"], "foto": data["foto"]}
+                    {"ora": data.get("ora",""), "chi": sq_in, "sq": sq_in, "st": st_v,
+                     "mit": f"{pref} {data.get('msg','')}", "ris": "VALIDATO", "op": st.session_state.op_name,
+                     "pos": data.get("pos"), "foto": data.get("foto")}
                 )
-                st.session_state.squadre[sq_in]["stato"] = st_v
+                if sq_in in st.session_state.squadre:
+                    st.session_state.squadre[sq_in]["stato"] = st_v
                 st.session_state.inbox.pop(i)
                 save_data_to_disk()
                 st.rerun()
@@ -1319,6 +1364,8 @@ if st.session_state.inbox:
                 st.session_state.inbox.pop(i)
                 save_data_to_disk()
                 st.rerun()
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
 # =========================
 # DATI EVENTO
@@ -1379,6 +1426,8 @@ with t_rad:
         st.markdown("</div>", unsafe_allow_html=True)
 
     with r:
+        render_inbox_panel()
+
         st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
         df_all = pd.DataFrame(st.session_state.brogliaccio)
         m = build_folium_map_from_df(df_all, center=st.session_state.pos_mappa, zoom=14)
@@ -1657,31 +1706,27 @@ if col_m1.button("🧹 CANCELLA TUTTI I DATI"):
 if col_m2.button("💾 SALVA ORA SU DISCO"):
     save_data_to_disk()
     st.success("Salvato.")
+
+
 # =========================
 # FOOTER
 # =========================
 st.markdown("""
 <style>
-.pc-footer {
-    margin-top: 40px;
-    padding: 14px 10px;
-    text-align: center;
-    font-size: 0.85rem;
-    font-weight: 700;
-    color: #475569;
-    border-top: 1px solid rgba(15,23,42,.15);
+.pc-footer{
+  margin-top: 42px;
+  padding: 14px 10px 6px 10px;
+  text-align:center;
+  font-size: .85rem;
+  font-weight: 800;
+  color: #475569;
+  border-top: 1px solid rgba(15,23,42,.14);
 }
-.pc-footer span {
-    margin: 0 6px;
-    white-space: nowrap;
-}
+.pc-footer a{ color:#0d47a1; text-decoration:none; font-weight: 900; }
+.pc-footer a:hover{ text-decoration: underline; }
 </style>
 
 <div class="pc-footer">
-    <span>🛡️ Gruppo Comunale Volontari Protezione Civile Thiene</span> |
-    <span>📍 Via Dell'Aeroporto, 33</span> |
-    <span>✉️ pcthiene@gmail.com</span> |
-    <span>🎨 Realizzato da <b>JokArt</b></span>
+  🛡️ Gruppo Comunale Volontari Protezione Civile Thiene · 📍 Via Dell'Aeroporto, 33 · ✉️ <a href="mailto:pcthiene@gmail.com">pcthiene@gmail.com</a> · 🎨 Realizzato da <b>JokArt</b>
 </div>
 """, unsafe_allow_html=True)
-

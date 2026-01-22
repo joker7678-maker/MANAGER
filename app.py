@@ -36,6 +36,16 @@ COLORI_STATI = {
     "Rientro in corso": {"color": "orange", "hex": "#ffb74d"},
     "Rientrata al Coc": {"color": "green", "hex": "#81c784"},
 }
+# =========================
+# NATO – Spelling radio
+# =========================
+NATO = {
+    "A":"Alfa","B":"Bravo","C":"Charlie","D":"Delta","E":"Echo","F":"Foxtrot",
+    "G":"Golf","H":"Hotel","I":"India","J":"Juliett","K":"Kilo","L":"Lima",
+    "M":"Mike","N":"November","O":"Oscar","P":"Papa","Q":"Quebec","R":"Romeo",
+    "S":"Sierra","T":"Tango","U":"Uniform","V":"Victor","W":"Whiskey",
+    "X":"X-ray","Y":"Yankee","Z":"Zulu"
+}
 
 # =========================
 # QUERY PARAMS (ACCESSO CAMPO)
@@ -571,6 +581,34 @@ def make_html_report_bytes(
     .tbl th {{ position: static; }}
     .no-map .mapblock {{ display:none !important; }}
   }}
+/* NATO solo sala radio – NON stampare */
+.nato-title{
+  margin-top:10px;
+  font-weight:950;
+  color:#0d47a1;
+  font-size:.9rem;
+}
+.nato-mini{
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(74px,1fr));
+  gap:6px;
+  margin-top:10px;
+}
+.nato-chip{
+  background:#f1f5f9;
+  border:1px solid rgba(15,23,42,.15);
+  border-radius:10px;
+  padding:6px;
+  text-align:center;
+  line-height:1.05;
+}
+.nato-letter{font-weight:950;color:#0d47a1}
+.nato-word{font-size:.7rem;color:#334155}
+
+@media print{
+  .nato-title,.nato-mini,.nato-spell{display:none!important;}
+}
+
 </style>
 </head>
 
@@ -1414,6 +1452,42 @@ with t_rad:
             df_all = pd.DataFrame(st.session_state.brogliaccio)
             m = build_folium_map_from_df(df_all, center=st.session_state.pos_mappa, zoom=14)
             st_folium(m, width="100%", height=450)
+# =========================
+# NATO – SOLO SALA RADIO
+# =========================
+st.markdown("<div class='nato-title'>📻 Alfabeto NATO – spelling rapido</div>", unsafe_allow_html=True)
+
+testo_nato = st.text_input(
+    "Scrivi testo / nominativo / codice",
+    placeholder="Es. DAVIDE 21 / SQUADRA ALFA",
+    key="nato_input"
+)
+
+def render_nato(txt: str) -> str:
+    out = []
+    for ch in txt:
+        if ch == " ":
+            out.append("<span style='opacity:.3;margin:0 6px;'>•</span>")
+            continue
+        c = ch.upper()
+        if c in NATO:
+            out.append(
+                f"<div class='nato-chip nato-spell'>"
+                f"<div class='nato-letter'>{c}</div>"
+                f"<div class='nato-word'>{NATO[c]}</div>"
+                f"</div>"
+            )
+        elif c.isdigit():
+            out.append(
+                f"<div class='nato-chip nato-spell'>"
+                f"<div class='nato-letter'>{c}</div>"
+                f"<div class='nato-word'>Numero</div>"
+                f"</div>"
+            )
+    return "<div class='nato-mini'>" + "".join(out) + "</div>"
+
+if testo_nato.strip():
+    st.markdown(render_nato(testo_nato), unsafe_allow_html=True)
 
             st.markdown("""
     <div class="nato-title">📻 Alfabeto NATO (rapido)</div>

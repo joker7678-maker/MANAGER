@@ -1256,48 +1256,6 @@ c4.markdown(metric_box(COLORI_STATI["Rientrata al Coc"]["hex"], "↩️", "Rient
 c5.markdown(metric_box(COLORI_STATI["In attesa al COC"]["hex"], "🏠", "Al COC", st_lista.count("In attesa al COC")), unsafe_allow_html=True)
 
 # =========================
-# INBOX APPROVAZIONE
-# =========================
-if st.session_state.inbox:
-    st.markdown(f"<div class='pc-alert'>⚠️ RICEVUTI {len(st.session_state.inbox)} AGGIORNAMENTI DA VALIDARE</div>", unsafe_allow_html=True)
-
-    for i, data in enumerate(st.session_state.inbox):
-        sq_in = data["sq"]
-        inf_in = get_squadra_info(sq_in)
-
-        with st.expander(f"📥 APPROVAZIONE: {sq_in} ({data['ora']})", expanded=True):
-            st.markdown(f"<div class='pc-flow'>📞 <b>{sq_in}</b> <span class='pc-arrow'>➜</span> 🎧 <b>SALA OPERATIVA</b></div>", unsafe_allow_html=True)
-            st.markdown(f"**👤 Caposquadra:** {inf_in['capo'] or '—'} &nbsp;&nbsp; | &nbsp;&nbsp; **📞 Tel:** {inf_in['tel'] or '—'}")
-
-            st.write(f"**MSG:** {data['msg']}")
-            if data["pos"]:
-                st.info(f"📍 GPS acquisito: {data['pos']}")
-            if data["foto"]:
-                st.image(data["foto"], width=220)
-
-            st_v = st.selectbox("Nuovo Stato:", list(COLORI_STATI.keys()), key=f"sv_inbox_{i}")
-            st.markdown(chip_stato(st_v), unsafe_allow_html=True)
-
-            cb1, cb2 = st.columns(2)
-            if cb1.button("✅ APPROVA", key=f"ap_{i}"):
-                pref = "[AUTO]" if data["pos"] else "[AUTO-PRIVACY]"
-                st.session_state.brogliaccio.insert(
-                    0,
-                    {"ora": data["ora"], "chi": sq_in, "sq": sq_in, "st": st_v,
-                     "mit": f"{pref} {data['msg']}", "ris": "VALIDATO", "op": st.session_state.op_name,
-                     "pos": data["pos"], "foto": data["foto"]}
-                )
-                st.session_state.squadre[sq_in]["stato"] = st_v
-                st.session_state.inbox.pop(i)
-                save_data_to_disk()
-                st.rerun()
-
-            if cb2.button("🗑️ SCARTA", key=f"sc_{i}"):
-                st.session_state.inbox.pop(i)
-                save_data_to_disk()
-                st.rerun()
-
-# =========================
 # DATI EVENTO
 # =========================
 st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
@@ -1356,7 +1314,7 @@ with t_rad:
         st.markdown("</div>", unsafe_allow_html=True)
 
     with r:
-        # ✅ INBOX sopra la mappa (chiuso di default)
+        # ✅ INBOX sopra la mappa (chiuso di default) — visibile SOLO qui
         if st.session_state.inbox:
             st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
             st.subheader("📥 Aggiornamenti da campo (da validare)")
@@ -1364,19 +1322,19 @@ with t_rad:
 
             # elenco expander CHIUSI
             for i, data in enumerate(st.session_state.inbox):
-                sq_in = data["sq"]
+                sq_in = data.get("sq")
                 inf_in = get_squadra_info(sq_in)
 
-                with st.expander(f"📥 {sq_in} ({data['ora']})", expanded=False):
+                with st.expander(f"📥 {sq_in} ({data.get('ora','')})", expanded=False):
                     st.markdown(
                         f"<div class='pc-flow'>📞 <b>{sq_in}</b> <span class='pc-arrow'>➜</span> 🎧 <b>SALA OPERATIVA</b></div>",
-                        unsafe_allow_html=True
+                        unsafe_allow_html=True,
                     )
                     st.markdown(
                         f"**👤 Caposquadra:** {inf_in['capo'] or '—'} &nbsp;&nbsp; | &nbsp;&nbsp; **📞 Tel:** {inf_in['tel'] or '—'}"
                     )
 
-                    st.write(f"**MSG:** {data['msg']}")
+                    st.write(f"**MSG:** {data.get('msg','')}")
                     if data.get("pos"):
                         st.info(f"📍 GPS acquisito: {data['pos']}")
                     if data.get("foto"):
@@ -1390,9 +1348,17 @@ with t_rad:
                         pref = "[AUTO]" if data.get("pos") else "[AUTO-PRIVACY]"
                         st.session_state.brogliaccio.insert(
                             0,
-                            {"ora": data["ora"], "chi": sq_in, "sq": sq_in, "st": st_v,
-                             "mit": f"{pref} {data['msg']}", "ris": "VALIDATO", "op": st.session_state.op_name,
-                             "pos": data.get("pos"), "foto": data.get("foto")}
+                            {
+                                "ora": data.get("ora", datetime.now().strftime("%H:%M")),
+                                "chi": sq_in,
+                                "sq": sq_in,
+                                "st": st_v,
+                                "mit": f"{pref} {data.get('msg','')}",
+                                "ris": "VALIDATO",
+                                "op": st.session_state.op_name,
+                                "pos": data.get("pos"),
+                                "foto": data.get("foto"),
+                            },
                         )
                         st.session_state.squadre[sq_in]["stato"] = st_v
                         st.session_state.inbox.pop(i)
@@ -1406,7 +1372,7 @@ with t_rad:
 
             st.markdown("</div>", unsafe_allow_html=True)
 
-        # ✅ MAPPA (sotto gli invii)
+        # ✅ MAPPA
         st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
         df_all = pd.DataFrame(st.session_state.brogliaccio)
         m = build_folium_map_from_df(df_all, center=st.session_state.pos_mappa, zoom=14)
@@ -1416,6 +1382,7 @@ with t_rad:
         # ✅ SCHEDA ALFABETO NATO (chiara) sotto la mappa
         st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
         st.subheader("🧾 Alfabeto NATO (fonetico)")
+
         nato = [
             ("A", "Alfa"), ("B", "Bravo"), ("C", "Charlie"), ("D", "Delta"), ("E", "Echo"), ("F", "Foxtrot"),
             ("G", "Golf"), ("H", "Hotel"), ("I", "India"), ("J", "Juliett"), ("K", "Kilo"), ("L", "Lima"),
@@ -1424,19 +1391,13 @@ with t_rad:
             ("Y", "Yankee"), ("Z", "Zulu"),
         ]
 
-        # tabella chiara in 2 colonne (A-M / N-Z)
         left = nato[:13]
         right = nato[13:]
         cA, cB = st.columns(2)
-
-        dfA = pd.DataFrame(left, columns=["Lettera", "Codice"])
-        dfB = pd.DataFrame(right, columns=["Lettera", "Codice"])
-
-        cA.dataframe(dfA, use_container_width=True, hide_index=True, height=460)
-        cB.dataframe(dfB, use_container_width=True, hide_index=True, height=460)
+        cA.dataframe(pd.DataFrame(left, columns=["Lettera", "Codice"]), use_container_width=True, hide_index=True, height=460)
+        cB.dataframe(pd.DataFrame(right, columns=["Lettera", "Codice"]), use_container_width=True, hide_index=True, height=460)
 
         st.markdown("</div>", unsafe_allow_html=True)
-
 
 with t_rep:
     st.markdown("<div class='pc-card'>", unsafe_allow_html=True)

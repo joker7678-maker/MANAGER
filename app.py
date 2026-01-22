@@ -1255,6 +1255,47 @@ c3.markdown(metric_box(COLORI_STATI["Intervento concluso"]["hex"], "✅", "Concl
 c4.markdown(metric_box(COLORI_STATI["Rientrata al Coc"]["hex"], "↩️", "Rientro", st_lista.count("Rientrata al Coc")), unsafe_allow_html=True)
 c5.markdown(metric_box(COLORI_STATI["In attesa al COC"]["hex"], "🏠", "Al COC", st_lista.count("In attesa al COC")), unsafe_allow_html=True)
 
+# =========================
+# INBOX APPROVAZIONE
+# =========================
+if st.session_state.inbox:
+    st.markdown(f"<div class='pc-alert'>⚠️ RICEVUTI {len(st.session_state.inbox)} AGGIORNAMENTI DA VALIDARE</div>", unsafe_allow_html=True)
+
+    for i, data in enumerate(st.session_state.inbox):
+        sq_in = data["sq"]
+        inf_in = get_squadra_info(sq_in)
+
+        with st.expander(f"📥 APPROVAZIONE: {sq_in} ({data['ora']})", expanded=True):
+            st.markdown(f"<div class='pc-flow'>📞 <b>{sq_in}</b> <span class='pc-arrow'>➜</span> 🎧 <b>SALA OPERATIVA</b></div>", unsafe_allow_html=True)
+            st.markdown(f"**👤 Caposquadra:** {inf_in['capo'] or '—'} &nbsp;&nbsp; | &nbsp;&nbsp; **📞 Tel:** {inf_in['tel'] or '—'}")
+
+            st.write(f"**MSG:** {data['msg']}")
+            if data["pos"]:
+                st.info(f"📍 GPS acquisito: {data['pos']}")
+            if data["foto"]:
+                st.image(data["foto"], width=220)
+
+            st_v = st.selectbox("Nuovo Stato:", list(COLORI_STATI.keys()), key=f"sv_inbox_{i}")
+            st.markdown(chip_stato(st_v), unsafe_allow_html=True)
+
+            cb1, cb2 = st.columns(2)
+            if cb1.button("✅ APPROVA", key=f"ap_{i}"):
+                pref = "[AUTO]" if data["pos"] else "[AUTO-PRIVACY]"
+                st.session_state.brogliaccio.insert(
+                    0,
+                    {"ora": data["ora"], "chi": sq_in, "sq": sq_in, "st": st_v,
+                     "mit": f"{pref} {data['msg']}", "ris": "VALIDATO", "op": st.session_state.op_name,
+                     "pos": data["pos"], "foto": data["foto"]}
+                )
+                st.session_state.squadre[sq_in]["stato"] = st_v
+                st.session_state.inbox.pop(i)
+                save_data_to_disk()
+                st.rerun()
+
+            if cb2.button("🗑️ SCARTA", key=f"sc_{i}"):
+                st.session_state.inbox.pop(i)
+                save_data_to_disk()
+                st.rerun()
 
 # =========================
 # DATI EVENTO
@@ -1315,14 +1356,13 @@ with t_rad:
         st.markdown("</div>", unsafe_allow_html=True)
 
     with r:
-        # =========================
-        # INBOX (sopra la mappa) — chiuso di default
-        # =========================
+        # ✅ INBOX sopra la mappa (chiuso di default)
         if st.session_state.inbox:
             st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
             st.subheader("📥 Aggiornamenti da campo (da validare)")
             st.caption(f"Totale: **{len(st.session_state.inbox)}** — apri un messaggio alla volta.")
 
+            # elenco expander CHIUSI
             for i, data in enumerate(st.session_state.inbox):
                 sq_in = data["sq"]
                 inf_in = get_squadra_info(sq_in)
@@ -1366,71 +1406,16 @@ with t_rad:
 
             st.markdown("</div>", unsafe_allow_html=True)
 
-        # =========================
-        # MAPPA
-        # =========================
+        # ✅ MAPPA (sotto gli invii)
         st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
         df_all = pd.DataFrame(st.session_state.brogliaccio)
         m = build_folium_map_from_df(df_all, center=st.session_state.pos_mappa, zoom=14)
         st_folium(m, width="100%", height=450)
         st.markdown("</div>", unsafe_allow_html=True)
 
-        # =========================
-        # ALFABETO NATO (compatto a chip) — sotto la mappa
-        # =========================
+        # ✅ SCHEDA ALFABETO NATO (chiara) sotto la mappa
         st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
         st.subheader("🧾 Alfabeto NATO (fonetico)")
-
-        st.markdown(
-            """
-            <style>
-              .nato-grid{
-                display:grid;
-                grid-template-columns: repeat(4, minmax(0, 1fr));
-                gap: 6px;
-                margin-top: 6px;
-              }
-              .nato-chip{
-                display:flex;
-                align-items:center;
-                justify-content:flex-start;
-                gap: 8px;
-                padding: 6px 8px;
-                border-radius: 10px;
-                background: #f4f6f9;
-                border: 1px solid #e2e6ee;
-                line-height: 1.1;
-              }
-              .nato-letter{
-                min-width: 22px;
-                height: 22px;
-                display:inline-flex;
-                align-items:center;
-                justify-content:center;
-                border-radius: 7px;
-                background: #ffffff;
-                border: 1px solid #d8deea;
-                font-weight: 800;
-                font-size: 12px;
-                color:#111;
-              }
-              .nato-code{
-                font-weight: 600;
-                font-size: 12px;
-                color:#111;
-                white-space: nowrap;
-              }
-              @media (max-width: 1100px){
-                .nato-grid{ grid-template-columns: repeat(3, minmax(0, 1fr)); }
-              }
-              @media (max-width: 800px){
-                .nato-grid{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
-              }
-            </style>
-            """,
-            unsafe_allow_html=True
-        )
-
         nato = [
             ("A", "Alfa"), ("B", "Bravo"), ("C", "Charlie"), ("D", "Delta"), ("E", "Echo"), ("F", "Foxtrot"),
             ("G", "Golf"), ("H", "Hotel"), ("I", "India"), ("J", "Juliett"), ("K", "Kilo"), ("L", "Lima"),
@@ -1439,18 +1424,19 @@ with t_rad:
             ("Y", "Yankee"), ("Z", "Zulu"),
         ]
 
-        chips_html = "<div class='nato-grid'>"
-        for letter, code in nato:
-            chips_html += (
-                f"<div class='nato-chip'>"
-                f"<span class='nato-letter'>{letter}</span>"
-                f"<span class='nato-code'>{code}</span>"
-                f"</div>"
-            )
-        chips_html += "</div>"
+        # tabella chiara in 2 colonne (A-M / N-Z)
+        left = nato[:13]
+        right = nato[13:]
+        cA, cB = st.columns(2)
 
-        st.markdown(chips_html, unsafe_allow_html=True)
+        dfA = pd.DataFrame(left, columns=["Lettera", "Codice"])
+        dfB = pd.DataFrame(right, columns=["Lettera", "Codice"])
+
+        cA.dataframe(dfA, use_container_width=True, hide_index=True, height=460)
+        cB.dataframe(dfB, use_container_width=True, hide_index=True, height=460)
+
         st.markdown("</div>", unsafe_allow_html=True)
+
 
 with t_rep:
     st.markdown("<div class='pc-card'>", unsafe_allow_html=True)

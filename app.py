@@ -1423,22 +1423,35 @@ with t_rad:
 
             st.markdown("</div>", unsafe_allow_html=True)
 
+               # =========================
+        # NATO – Convertitore (solo sala radio)
         # =========================
-        # MAPPA + NATO (solo sala radio)
-        # =========================
-        st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
-        df_all = pd.DataFrame(st.session_state.brogliaccio)
-        m = build_folium_map_from_df(df_all, center=st.session_state.pos_mappa, zoom=14)
-        st_folium(m, width="100%", height=450)
+        st.markdown("<div class='nato-title'>📻 Alfabeto NATO – convertitore</div>", unsafe_allow_html=True)
 
-        st.markdown("<div class='nato-title'>📻 Alfabeto NATO – spelling rapido</div>", unsafe_allow_html=True)
-        testo_nato = st.text_input(
-            "Scrivi testo / nominativo / codice",
-            placeholder="Es. DAVIDE 21 / SQUADRA ALFA",
-            key="nato_input",
+        mode = st.radio(
+            "Modalità:",
+            ["Testo → NATO", "NATO → Frase"],
+            horizontal=True,
+            key="nato_mode",
         )
 
-        def render_nato(txt: str) -> str:
+        # Dizionario inverso: parola NATO -> lettera
+        NATO_REV = {v.upper().replace("-", "").replace(" ", ""): k for k, v in NATO.items()}
+
+        def _clean_token(s: str) -> str:
+            return (
+                (s or "")
+                .strip()
+                .upper()
+                .replace(".", "")
+                .replace(",", "")
+                .replace(";", "")
+                .replace(":", "")
+                .replace("|", " ")
+                .replace("/", " ")
+            )
+
+        def render_nato_grid_from_text(txt: str) -> str:
             out = []
             for ch in (txt or ""):
                 if ch == " ":
@@ -1461,73 +1474,87 @@ with t_rad:
                     )
             return "<div class='nato-mini'>" + "".join(out) + "</div>"
 
-        if testo_nato.strip():
-            st.markdown(render_nato(testo_nato), unsafe_allow_html=True)
+        def nato_phrase_to_text(nato_phrase: str) -> str:
+            s = _clean_token(nato_phrase)
+            tokens = [t for t in s.split() if t]
+
+            out_chars = []
+            for t in tokens:
+                tt = t.replace("-", "")
+                if tt.isdigit():
+                    out_chars.append(tt)
+                    continue
+
+                # supporta XRAY / X-RAY
+                tt = tt.replace("X RAY", "XRAY").replace("XRAY", "XRAY")
+
+                # match diretto
+                key = tt.replace(" ", "").replace("-", "")
+                letter = NATO_REV.get(key)
+
+                if letter:
+                    out_chars.append(letter)
+                else:
+                    # se non riconosciuto, ignora oppure usa prima lettera
+                    # qui: uso prima lettera come fallback "gentile"
+                    out_chars.append(key[:1])
+
+            return "".join(out_chars)
+
+        if mode == "Testo → NATO":
+            testo_nato = st.text_input(
+                "Scrivi testo / nominativo / codice",
+                placeholder="Es. DAVIDE 21 / SQUADRA ALFA",
+                key="nato_input_text",
+            )
+
+            if testo_nato.strip():
+                st.markdown(render_nato_grid_from_text(testo_nato), unsafe_allow_html=True)
+            else:
+                # tabella completa se vuoto
+                st.markdown("""
+<div class="nato-mini">
+  <div class="nato-chip"><div class="nato-letter">A</div><div class="nato-word">Alfa</div></div>
+  <div class="nato-chip"><div class="nato-letter">B</div><div class="nato-word">Bravo</div></div>
+  <div class="nato-chip"><div class="nato-letter">C</div><div class="nato-word">Charlie</div></div>
+  <div class="nato-chip"><div class="nato-letter">D</div><div class="nato-word">Delta</div></div>
+  <div class="nato-chip"><div class="nato-letter">E</div><div class="nato-word">Echo</div></div>
+  <div class="nato-chip"><div class="nato-letter">F</div><div class="nato-word">Foxtrot</div></div>
+  <div class="nato-chip"><div class="nato-letter">G</div><div class="nato-word">Golf</div></div>
+  <div class="nato-chip"><div class="nato-letter">H</div><div class="nato-word">Hotel</div></div>
+  <div class="nato-chip"><div class="nato-letter">I</div><div class="nato-word">India</div></div>
+  <div class="nato-chip"><div class="nato-letter">J</div><div class="nato-word">Juliett</div></div>
+  <div class="nato-chip"><div class="nato-letter">K</div><div class="nato-word">Kilo</div></div>
+  <div class="nato-chip"><div class="nato-letter">L</div><div class="nato-word">Lima</div></div>
+  <div class="nato-chip"><div class="nato-letter">M</div><div class="nato-word">Mike</div></div>
+  <div class="nato-chip"><div class="nato-letter">N</div><div class="nato-word">November</div></div>
+  <div class="nato-chip"><div class="nato-letter">O</div><div class="nato-word">Oscar</div></div>
+  <div class="nato-chip"><div class="nato-letter">P</div><div class="nato-word">Papa</div></div>
+  <div class="nato-chip"><div class="nato-letter">Q</div><div class="nato-word">Quebec</div></div>
+  <div class="nato-chip"><div class="nato-letter">R</div><div class="nato-word">Romeo</div></div>
+  <div class="nato-chip"><div class="nato-letter">S</div><div class="nato-word">Sierra</div></div>
+  <div class="nato-chip"><div class="nato-letter">T</div><div class="nato-word">Tango</div></div>
+  <div class="nato-chip"><div class="nato-letter">U</div><div class="nato-word">Uniform</div></div>
+  <div class="nato-chip"><div class="nato-letter">V</div><div class="nato-word">Victor</div></div>
+  <div class="nato-chip"><div class="nato-letter">W</div><div class="nato-word">Whiskey</div></div>
+  <div class="nato-chip"><div class="nato-letter">X</div><div class="nato-word">X-ray</div></div>
+  <div class="nato-chip"><div class="nato-letter">Y</div><div class="nato-word">Yankee</div></div>
+  <div class="nato-chip"><div class="nato-letter">Z</div><div class="nato-word">Zulu</div></div>
+</div>
+""", unsafe_allow_html=True)
+
         else:
-            st.markdown("""
-    <div class="nato-mini">
-      <div class="nato-chip"><div class="nato-letter">A</div><div class="nato-word">Alfa</div></div>
-      <div class="nato-chip"><div class="nato-letter">B</div><div class="nato-word">Bravo</div></div>
-      <div class="nato-chip"><div class="nato-letter">C</div><div class="nato-word">Charlie</div></div>
-      <div class="nato-chip"><div class="nato-letter">D</div><div class="nato-word">Delta</div></div>
-      <div class="nato-chip"><div class="nato-letter">E</div><div class="nato-word">Echo</div></div>
-      <div class="nato-chip"><div class="nato-letter">F</div><div class="nato-word">Foxtrot</div></div>
-      <div class="nato-chip"><div class="nato-letter">G</div><div class="nato-word">Golf</div></div>
-      <div class="nato-chip"><div class="nato-letter">H</div><div class="nato-word">Hotel</div></div>
-      <div class="nato-chip"><div class="nato-letter">I</div><div class="nato-word">India</div></div>
-      <div class="nato-chip"><div class="nato-letter">J</div><div class="nato-word">Juliett</div></div>
-      <div class="nato-chip"><div class="nato-letter">K</div><div class="nato-word">Kilo</div></div>
-      <div class="nato-chip"><div class="nato-letter">L</div><div class="nato-word">Lima</div></div>
-      <div class="nato-chip"><div class="nato-letter">M</div><div class="nato-word">Mike</div></div>
-      <div class="nato-chip"><div class="nato-letter">N</div><div class="nato-word">November</div></div>
-      <div class="nato-chip"><div class="nato-letter">O</div><div class="nato-word">Oscar</div></div>
-      <div class="nato-chip"><div class="nato-letter">P</div><div class="nato-word">Papa</div></div>
-      <div class="nato-chip"><div class="nato-letter">Q</div><div class="nato-word">Quebec</div></div>
-      <div class="nato-chip"><div class="nato-letter">R</div><div class="nato-word">Romeo</div></div>
-      <div class="nato-chip"><div class="nato-letter">S</div><div class="nato-word">Sierra</div></div>
-      <div class="nato-chip"><div class="nato-letter">T</div><div class="nato-word">Tango</div></div>
-      <div class="nato-chip"><div class="nato-letter">U</div><div class="nato-word">Uniform</div></div>
-      <div class="nato-chip"><div class="nato-letter">V</div><div class="nato-word">Victor</div></div>
-      <div class="nato-chip"><div class="nato-letter">W</div><div class="nato-word">Whiskey</div></div>
-      <div class="nato-chip"><div class="nato-letter">X</div><div class="nato-word">X-ray</div></div>
-      <div class="nato-chip"><div class="nato-letter">Y</div><div class="nato-word">Yankee</div></div>
-      <div class="nato-chip"><div class="nato-letter">Z</div><div class="nato-word">Zulu</div></div>
-    </div>
-    """, unsafe_allow_html=True)
-
-        st.markdown("</div>", unsafe_allow_html=True)
-
-with t_rep:
-    st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
-    st.subheader("📊 Report per Squadra")
-
-    df = pd.DataFrame(st.session_state.brogliaccio)
-    filtro = st.selectbox("Seleziona squadra:", ["TUTTE"] + list(st.session_state.squadre.keys()), index=0)
-
-    st.markdown("#### 📞 Rubrica Squadre (Caposquadra / Telefono)")
-    rubrica = []
-    for sq_name, inf in st.session_state.squadre.items():
-        rubrica.append({
-            "SQUADRA": sq_name,
-            "CAPOSQUADRA": (inf.get("capo") or "").strip() or "—",
-            "TELEFONO": (inf.get("tel") or "").strip() or "—",
-            "STATO": inf.get("stato", "In attesa al COC")
-        })
-    st.dataframe(pd.DataFrame(rubrica), use_container_width=True, height=220)
-
-    st.divider()
-    if df.empty:
-        st.info("Nessun dato nel brogliaccio.")
-        df_f = pd.DataFrame()
-        df_view = pd.DataFrame()
-    else:
-        df_f = df[df["sq"] == filtro].copy() if filtro != "TUTTE" else df.copy()
-        df_view = df_for_report(df_f)
-        st.dataframe(df_view, use_container_width=True, height=360)
-
-        st.divider()
-        csv = df_f.to_csv(index=False).encode("utf-8")
-        st.download_button("⬇️ Scarica CSV filtrato", data=csv, file_name="brogliaccio.csv", mime="text/csv")
+            nato_in = st.text_input(
+                "Scrivi le parole NATO",
+                placeholder="Es. Delta Alfa Victor India Delta Echo",
+                key="nato_input_nato",
+            )
+            if nato_in.strip():
+                out = nato_phrase_to_text(nato_in)
+                st.success(f"✅ Frase: **{out}**")
+                st.caption("Puoi separare con spazi, | oppure / (es. Delta|Alfa|Victor).")
+            else:
+                st.caption("Scrivi una sequenza NATO per convertirla in testo.")
 
     # ✅ HTML REPORT con selettori:
     # - squadra

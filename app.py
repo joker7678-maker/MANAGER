@@ -1520,66 +1520,66 @@ with t_rad:
           <div class="nato-chip"><div class="nato-letter">Z</div><div class="nato-word">Zulu</div></div>
         </div>""", unsafe_allow_html=True)
 
-        else:
-            # composizione con tastiera (lettere + numeri)
-            if "nato_phrase" not in st.session_state:
-                st.session_state.nato_phrase = ""
+else:
+    if "nato_phrase" not in st.session_state:
+        st.session_state.nato_phrase = ""
 
-            # 🔝 USCITA FRASE SOPRA
-            if st.session_state.nato_phrase:
-                st.success(f"📤 Frase: **{st.session_state.nato_phrase}**")
-            else:
-                st.info("Componi la frase cliccando i tasti NATO")
+    # 🔝 USCITA FRASE SOPRA
+    if st.session_state.nato_phrase:
+        st.success(f"📤 Frase: **{st.session_state.nato_phrase}**")
+    else:
+        st.info("Componi la frase cliccando i tasti NATO")
 
-            st.markdown("<div class='nato-kbd'>", unsafe_allow_html=True)
+    st.markdown("### 📻 Tastiera NATO")
 
-            # ===== LETTERE NATO (chip veri) =====
-letters = list(NATO.items())
-rows = [letters[i:i+6] for i in range(0, len(letters), 6)]
+    # ===== LETTERE NATO (chip veri cliccabili) =====
+    letters = list(NATO.items())
+    rows = [letters[i:i+6] for i in range(0, len(letters), 6)]
+    for row in rows:
+        cols = st.columns(len(row))
+        for c, (letter, word) in zip(cols, row):
+            with c:
+                st.markdown("<div class='nato-key-wrap'>", unsafe_allow_html=True)
+                if st.button(" ", key=f"nato_key_{letter}", use_container_width=True):
+                    st.session_state.nato_phrase += letter
+                st.markdown(
+                    f"""
+                    <div class="nato-chip nato-spell">
+                        <div class="nato-letter">{letter}</div>
+                        <div class="nato-word">{word}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                st.markdown("</div>", unsafe_allow_html=True)
 
-for row in rows:
-    cols = st.columns(len(row))
-    for c, (letter, word) in zip(cols, row):
-        with c:
-            st.markdown("<div class='nato-key-wrap'>", unsafe_allow_html=True)
+    # ===== NUMERI NATO (chip veri cliccabili) =====
+    st.markdown("#### 🔢 Numeri")
+    nums = list(NATO_NUM.items())
+    rows = [nums[i:i+5] for i in range(0, len(nums), 5)]
+    for row in rows:
+        cols = st.columns(len(row))
+        for c, (num, word) in zip(cols, row):
+            with c:
+                st.markdown("<div class='nato-key-wrap'>", unsafe_allow_html=True)
+                if st.button(" ", key=f"nato_num_{num}", use_container_width=True):
+                    st.session_state.nato_phrase += num
+                st.markdown(
+                    f"""
+                    <div class="nato-chip nato-spell">
+                        <div class="nato-letter">{num}</div>
+                        <div class="nato-word">{word}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                st.markdown("</div>", unsafe_allow_html=True)
 
-            if st.button(" ", key=f"nato_key_{letter}", use_container_width=True):
-                st.session_state.nato_phrase += letter
-
-            st.markdown(
-                f"""
-                <div class="nato-chip nato-spell">
-                    <div class="nato-letter">{letter}</div>
-                    <div class="nato-word">{word}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-            st.markdown("</div>", unsafe_allow_html=True)
-
-
-            st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
-            st.markdown("#### 🔢 Numeri")
-            digits = list("0123456789")
-            drows = [digits[i:i+5] for i in range(0, len(digits), 5)]
-            for row in drows:
-                cols = st.columns(len(row))
-                for c, d in zip(cols, row):
-                    st.markdown("<div class=\'nato-key-wrap\'>", unsafe_allow_html=True)
-                    if c.button(" ", use_container_width=True, key=f"nato_digit_{d}"):
-                        st.session_state.nato_phrase += d
-                    st.markdown(f"""<div class="nato-chip nato-spell"><div class="nato-letter">{d}</div><div class="nato-word">{NATO_NUM[d]}</div></div>""", unsafe_allow_html=True)
-                    st.markdown("</div>", unsafe_allow_html=True)
-                        st.session_state.nato_phrase += d
-
-            st.markdown("</div>", unsafe_allow_html=True)
-
-            c1, c2 = st.columns(2)
-            if c1.button("⌫ Cancella ultimo", use_container_width=True, key="nato_back"):
-                st.session_state.nato_phrase = st.session_state.nato_phrase[:-1]
-            if c2.button("🔄 Reset", use_container_width=True, key="nato_reset"):
-                st.session_state.nato_phrase = ""
+    c1, c2 = st.columns(2)
+    if c1.button("⌫ Cancella ultimo", use_container_width=True, key="nato_back"):
+        st.session_state.nato_phrase = st.session_state.nato_phrase[:-1]
+    if c2.button("🔄 Reset", use_container_width=True, key="nato_reset"):
+        st.session_state.nato_phrase = ""
         st.markdown("</div>", unsafe_allow_html=True)
 
 with t_rep:

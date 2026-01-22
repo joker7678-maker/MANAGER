@@ -1504,6 +1504,15 @@ with t_rad:
                     if c.button(letter, use_container_width=True):
                         st.session_state.nato_phrase += letter
 
+
+            st.markdown("#### 🔢 Numeri")
+            digits = list("0123456789")
+            drows = [digits[i:i+5] for i in range(0, len(digits), 5)]
+            for row in drows:
+                dcols = st.columns(len(row))
+                for c, d in zip(dcols, row):
+                    if c.button(d, use_container_width=True, key=f"nato_digit_{d}"): 
+                        st.session_state.nato_phrase += d
             c1, c2 = st.columns(2)
             if c1.button("⌫ Cancella ultimo", use_container_width=True):
                 st.session_state.nato_phrase = st.session_state.nato_phrase[:-1]

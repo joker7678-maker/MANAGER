@@ -1453,8 +1453,42 @@ if mode == "Testo → NATO":
         placeholder="Es. DAVIDE 21 / SQUADRA ALFA",
         key="nato_input_text",
     )
+
     if testo_nato.strip():
         st.markdown(render_nato_grid_from_text(testo_nato), unsafe_allow_html=True)
+    else:
+        # ✅ ALFABETO COMPLETO SEMPRE VISIBILE SE VUOTO
+        st.markdown("""
+<div class="nato-mini">
+  <div class="nato-chip"><div class="nato-letter">A</div><div class="nato-word">Alfa</div></div>
+  <div class="nato-chip"><div class="nato-letter">B</div><div class="nato-word">Bravo</div></div>
+  <div class="nato-chip"><div class="nato-letter">C</div><div class="nato-word">Charlie</div></div>
+  <div class="nato-chip"><div class="nato-letter">D</div><div class="nato-word">Delta</div></div>
+  <div class="nato-chip"><div class="nato-letter">E</div><div class="nato-word">Echo</div></div>
+  <div class="nato-chip"><div class="nato-letter">F</div><div class="nato-word">Foxtrot</div></div>
+  <div class="nato-chip"><div class="nato-letter">G</div><div class="nato-word">Golf</div></div>
+  <div class="nato-chip"><div class="nato-letter">H</div><div class="nato-word">Hotel</div></div>
+  <div class="nato-chip"><div class="nato-letter">I</div><div class="nato-word">India</div></div>
+  <div class="nato-chip"><div class="nato-letter">J</div><div class="nato-word">Juliett</div></div>
+  <div class="nato-chip"><div class="nato-letter">K</div><div class="nato-word">Kilo</div></div>
+  <div class="nato-chip"><div class="nato-letter">L</div><div class="nato-word">Lima</div></div>
+  <div class="nato-chip"><div class="nato-letter">M</div><div class="nato-word">Mike</div></div>
+  <div class="nato-chip"><div class="nato-letter">N</div><div class="nato-word">November</div></div>
+  <div class="nato-chip"><div class="nato-letter">O</div><div class="nato-word">Oscar</div></div>
+  <div class="nato-chip"><div class="nato-letter">P</div><div class="nato-word">Papa</div></div>
+  <div class="nato-chip"><div class="nato-letter">Q</div><div class="nato-word">Quebec</div></div>
+  <div class="nato-chip"><div class="nato-letter">R</div><div class="nato-word">Romeo</div></div>
+  <div class="nato-chip"><div class="nato-letter">S</div><div class="nato-word">Sierra</div></div>
+  <div class="nato-chip"><div class="nato-letter">T</div><div class="nato-word">Tango</div></div>
+  <div class="nato-chip"><div class="nato-letter">U</div><div class="nato-word">Uniform</div></div>
+  <div class="nato-chip"><div class="nato-letter">V</div><div class="nato-word">Victor</div></div>
+  <div class="nato-chip"><div class="nato-letter">W</div><div class="nato-word">Whiskey</div></div>
+  <div class="nato-chip"><div class="nato-letter">X</div><div class="nato-word">X-ray</div></div>
+  <div class="nato-chip"><div class="nato-letter">Y</div><div class="nato-word">Yankee</div></div>
+  <div class="nato-chip"><div class="nato-letter">Z</div><div class="nato-word">Zulu</div></div>
+</div>
+""", unsafe_allow_html=True)
+
 else:
     nato_in = st.text_input(
         "Scrivi le parole NATO",
@@ -1465,40 +1499,11 @@ else:
         out = nato_phrase_to_text(nato_in)
         st.success(f"✅ Frase: **{out}**")
         st.caption("Puoi separare con spazi, | oppure / (es. Delta|Alfa|Victor).")
-        st.markdown("</div>", unsafe_allow_html=True)
-
-with t_rep:
-    st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
-    st.subheader("📊 Report per Squadra")
-
-    df = pd.DataFrame(st.session_state.brogliaccio)
-    filtro = st.selectbox("Seleziona squadra:", ["TUTTE"] + list(st.session_state.squadre.keys()), index=0)
-
-    st.markdown("#### 📞 Rubrica Squadre (Caposquadra / Telefono)")
-    rubrica = []
-    for sq_name, inf in st.session_state.squadre.items():
-        rubrica.append({
-            "SQUADRA": sq_name,
-            "CAPOSQUADRA": (inf.get("capo") or "").strip() or "—",
-            "TELEFONO": (inf.get("tel") or "").strip() or "—",
-            "STATO": inf.get("stato", "In attesa al COC")
-        })
-    st.dataframe(pd.DataFrame(rubrica), use_container_width=True, height=220)
-
-    st.divider()
-    if df.empty:
-        st.info("Nessun dato nel brogliaccio.")
-        df_f = pd.DataFrame()
-        df_view = pd.DataFrame()
     else:
-        df_f = df[df["sq"] == filtro].copy() if filtro != "TUTTE" else df.copy()
-        df_view = df_for_report(df_f)
-        st.dataframe(df_view, use_container_width=True, height=360)
+        st.caption("Scrivi una sequenza NATO per convertirla in testo.")
 
-        st.divider()
-        csv = df_f.to_csv(index=False).encode("utf-8")
-        st.download_button("⬇️ Scarica CSV filtrato", data=csv, file_name="brogliaccio.csv", mime="text/csv")
-
+# ✅ CHIUSURA CARD SEMPRE E COMUNQUE (fuori dagli if!)
+st.markdown("</div>", unsafe_allow_html=True)
     # ✅ HTML REPORT con selettori:
     # - squadra
     # - stampa con/senza mappa

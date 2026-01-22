@@ -1211,6 +1211,81 @@ section[data-testid="stSidebar"] .pc-squad-list hr{
 
 
 
+
+
+/* ===== FIX DEFINITIVO SIDEBAR SQUADRE (card chiara + testi scuri + freccia bianca) ===== */
+/* Nota: usiamo selettori "larghi" (non solo data-testid) perché Streamlit cambia spesso la struttura DOM */
+
+section[data-testid="stSidebar"] .pc-squad-list div[data-testid="stExpander"],
+section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"]{
+  background: transparent !important;
+  border: none !important;
+}
+
+/* Card (blu chiaro) applicata direttamente al <details> */
+section[data-testid="stSidebar"] .pc-squad-list details,
+section[data-testid="stSidebar"] .pc-squad-list details[data-testid="stExpander"]{
+  background: #e7f0ff !important;
+  border: 1px solid rgba(2,6,23,.10) !important;
+  border-radius: 18px !important;
+  box-shadow: 0 10px 24px rgba(2,6,23,.10) !important;
+  overflow: hidden !important;
+  margin: 10px 0 !important;
+}
+
+/* Titolo expander */
+section[data-testid="stSidebar"] .pc-squad-list details > summary{
+  background: #e7f0ff !important;
+  padding: 14px 14px !important;
+  color: #0b1220 !important;
+  font-weight: 950 !important;
+}
+
+/* TESTO nel summary: forzato scuro su tutti i figli */
+section[data-testid="stSidebar"] .pc-squad-list details > summary *,
+section[data-testid="stSidebar"] .pc-squad-list details > summary p,
+section[data-testid="stSidebar"] .pc-squad-list details > summary span{
+  color: #0b1220 !important;
+}
+
+/* Chevron/Toggle: rendilo bianco e ben visibile */
+section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpanderToggleIcon"],
+section[data-testid="stSidebar"] .pc-squad-list div[data-testid="stExpanderToggleIcon"]{
+  background: rgba(13,71,161,.75) !important;
+  border-radius: 999px !important;
+  padding: 6px !important;
+  margin-right: 10px !important;
+}
+section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpanderToggleIcon"] svg,
+section[data-testid="stSidebar"] .pc-squad-list div[data-testid="stExpanderToggleIcon"] svg{
+  color: #ffffff !important;
+  fill: #ffffff !important;
+  stroke: #ffffff !important;
+}
+
+/* Corpo expander: più chiaro e testo scuro */
+section[data-testid="stSidebar"] .pc-squad-list details > div,
+section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpanderDetails"]{
+  background: rgba(255,255,255,.55) !important;
+  padding: 10px 14px 14px 14px !important;
+}
+section[data-testid="stSidebar"] .pc-squad-list details div[data-testid="stMarkdownContainer"] p,
+section[data-testid="stSidebar"] .pc-squad-list details div[data-testid="stMarkdownContainer"] li,
+section[data-testid="stSidebar"] .pc-squad-list details label,
+section[data-testid="stSidebar"] .pc-squad-list details [data-testid="stCaptionContainer"]{
+  color: #0b1220 !important;
+}
+
+/* Bottoni dentro la lista squadre: chiari + testo scuro */
+section[data-testid="stSidebar"] .pc-squad-list .stButton > button{
+  background: #ffffff !important;
+  color: #0b1220 !important;
+  border: 1px solid rgba(2,6,23,.16) !important;
+}
+section[data-testid="stSidebar"] .pc-squad-list .stButton > button:hover{
+  filter: brightness(0.98) !important;
+}
+
 </style>
 """, unsafe_allow_html=True)
 

@@ -1379,9 +1379,10 @@ with t_rad:
         st_folium(m, width="100%", height=450)
         st.markdown("</div>", unsafe_allow_html=True)
 
-        # ✅ SCHEDA ALFABETO NATO (chiara) sotto la mappa
+        # ✅ SCHEDA ALFABETO NATO (compatta) sotto la mappa
         st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
         st.subheader("🧾 Alfabeto NATO (fonetico)")
+        st.caption("Lettura rapida per comunicazioni radio: lettera + codice fonetico.")
 
         nato = [
             ("A", "Alfa"), ("B", "Bravo"), ("C", "Charlie"), ("D", "Delta"), ("E", "Echo"), ("F", "Foxtrot"),
@@ -1391,47 +1392,78 @@ with t_rad:
             ("Y", "Yankee"), ("Z", "Zulu"),
         ]
 
-        left = nato[:13]
-        right = nato[13:]
-        cA, cB = st.columns(2)
-        cA.dataframe(pd.DataFrame(left, columns=["Lettera", "Codice"]), use_container_width=True, hide_index=True, height=460)
-        cB.dataframe(pd.DataFrame(right, columns=["Lettera", "Codice"]), use_container_width=True, hide_index=True, height=460)
+        # griglia "chip" compatta
+        nato_chips = []
+        for letter, code in nato:
+            nato_chips.append(
+                f"""<div class='nato-chip'><span class='nato-letter'>{letter}</span><span class='nato-code'>{code}</span></div>"""
+            )
 
+        nato_html = """
+        <style>
+          .nato-grid{
+            display:grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 8px;
+            margin-top: 8px;
+          }
+          @media (max-width: 1100px){
+            .nato-grid{ grid-template-columns: repeat(3, minmax(0, 1fr)); }
+          }
+          @media (max-width: 820px){
+            .nato-grid{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
+          }
+          .nato-chip{
+            display:flex;
+            align-items:center;
+            justify-content:flex-start;
+            gap:10px;
+            padding:8px 10px;
+            border:1px solid rgba(0,0,0,.12);
+            border-radius:14px;
+            background: rgba(255,255,255,.85);
+          }
+          .nato-letter{
+            display:inline-flex;
+            align-items:center;
+            justify-content:center;
+            width:32px;
+            height:32px;
+            border-radius:10px;
+            border:1px solid rgba(0,0,0,.14);
+            font-weight:800;
+            font-size: 16px;
+            color:#111;
+            background: rgba(255,255,255,1);
+            flex: 0 0 auto;
+          }
+          .nato-code{
+            font-weight:700;
+            color:#111;
+            letter-spacing:.2px;
+          }
+          .nato-mini{
+            margin-top: 10px;
+            padding: 10px 12px;
+            border-radius: 14px;
+            background: rgba(0,0,0,.03);
+            border: 1px dashed rgba(0,0,0,.18);
+            color:#111;
+          }
+          .nato-mini b{ color:#111; }
+        </style>
+        <div class='nato-grid'>
+        """ + "\n".join(nato_chips) + """
+        </div>
+        <div class='nato-mini'>
+          <b>Esempio:</b> “Thiene” → <b>T</b>ango · <b>H</b>otel · <b>I</b>ndia · <b>E</b>cho · <b>N</b>ovember · <b>E</b>cho
+        </div>
+        """
+
+        st.markdown(nato_html, unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
-with t_rep:
-    st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
-    st.subheader("📊 Report per Squadra")
-
-    df = pd.DataFrame(st.session_state.brogliaccio)
-    filtro = st.selectbox("Seleziona squadra:", ["TUTTE"] + list(st.session_state.squadre.keys()), index=0)
-
-    st.markdown("#### 📞 Rubrica Squadre (Caposquadra / Telefono)")
-    rubrica = []
-    for sq_name, inf in st.session_state.squadre.items():
-        rubrica.append({
-            "SQUADRA": sq_name,
-            "CAPOSQUADRA": (inf.get("capo") or "").strip() or "—",
-            "TELEFONO": (inf.get("tel") or "").strip() or "—",
-            "STATO": inf.get("stato", "In attesa al COC")
-        })
-    st.dataframe(pd.DataFrame(rubrica), use_container_width=True, height=220)
-
-    st.divider()
-    if df.empty:
-        st.info("Nessun dato nel brogliaccio.")
-        df_f = pd.DataFrame()
-        df_view = pd.DataFrame()
-    else:
-        df_f = df[df["sq"] == filtro].copy() if filtro != "TUTTE" else df.copy()
-        df_view = df_for_report(df_f)
-        st.dataframe(df_view, use_container_width=True, height=360)
-
-        st.divider()
-        csv = df_f.to_csv(index=False).encode("utf-8")
-        st.download_button("⬇️ Scarica CSV filtrato", data=csv, file_name="brogliaccio.csv", mime="text/csv")
-
-    # ✅ HTML REPORT con selettori:
+# ✅ HTML REPORT con selettori:
     # - squadra
     # - stampa con/senza mappa
     # - mappa: ultime posizioni / tutti eventi / percorso

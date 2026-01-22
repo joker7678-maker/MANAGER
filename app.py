@@ -1503,14 +1503,14 @@ else:
         st.caption("Scrivi una sequenza NATO per convertirla in testo.")
 
 # ✅ CHIUSURA CARD SEMPRE E COMUNQUE (fuori dagli if!)
-
 st.markdown("</div>", unsafe_allow_html=True)
+
     # ✅ HTML REPORT con selettori:
     # - squadra
     # - stampa con/senza mappa
     # - mappa: ultime posizioni / tutti eventi / percorso
 st.divider()
-    st.subheader("🖨️ Report HTML (stampa con/senza mappa + selettore mappa eventi squadra)")
+st.subheader("🖨️ Report HTML (stampa con/senza mappa + selettore mappa eventi squadra)")
 
     meta = {
         "ev_data": str(st.session_state.ev_data),

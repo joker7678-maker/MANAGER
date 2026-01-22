@@ -1160,6 +1160,18 @@ section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"] > det
   border-bottom: 1px solid rgba(15,23,42,.10) !important;
 }
 
+/* forza colore testo anche su elementi interni generati da Streamlit */
+section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"] > details > summary *{
+  color: #0b1220 !important;
+  opacity: 1 !important;
+  filter: none !important;
+}
+section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"] > details > summary p,
+section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"] > details > summary span{
+  color: #0b1220 !important;
+  opacity: 1 !important;
+}
+
 /* Nascondi chevron/freccia: usiamo i pallini (emoji) nel titolo */
 section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"] > details > summary svg{
   display: none !important;
@@ -1192,34 +1204,6 @@ section[data-testid="stSidebar"] .pc-squad-list hr{
 }
 
 
-
-/* ===== Sidebar: Squadre (schede chiare + NO frecce expander) ===== */
-section[data-testid="stSidebar"] details {
-  background: #ffffff !important;
-  border: 1px solid rgba(15,23,42,.18) !important;
-  border-radius: 16px !important;
-  box-shadow: 0 8px 18px rgba(2,6,23,.10) !important;
-  margin: 8px 0 10px 0 !important;
-  overflow: hidden !important;
-}
-section[data-testid="stSidebar"] details > summary {
-  background: #ffffff !important;
-  color: #0b1220 !important;
-  padding: 10px 12px !important;
-  font-weight: 950 !important;
-}
-/* nasconde la freccia/chevron */
-section[data-testid="stSidebar"] details > summary svg {
-  display: none !important;
-}
-section[data-testid="stSidebar"] details > summary::marker,
-section[data-testid="stSidebar"] details > summary::-webkit-details-marker {
-  display: none !important;
-}
-/* contenuto expander */
-section[data-testid="stSidebar"] details > div {
-  background: #ffffff !important;
-}
 
 </style>
 """, unsafe_allow_html=True)

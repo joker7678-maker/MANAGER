@@ -9,7 +9,7 @@ import json
 import uuid
 import qrcode
 from io import BytesIO
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple, Dict, Any, List
 
 # =========================
 # CONFIG
@@ -18,6 +18,14 @@ st.set_page_config(page_title="RADIO MANAGER - PROTEZIONE CIVILE THIENE", layout
 
 DATA_PATH = "data.json"
 LOGO_PATH = "logo.png"
+
+# ⚠️ Per avere MAPPA CHE STAMPA SICURO nell'HTML:
+# aggiungi in requirements.txt:
+# staticmap==0.5.7
+# pillow==10.4.0
+# requests==2.32.3
+#
+# (Streamlit Cloud rilegge requirements e poi la mappa in stampa diventa un'IMMAGINE)
 
 COLORI_STATI = {
     "In attesa al COC": {"color": "black", "hex": "#455a64"},
@@ -53,6 +61,10 @@ def img_to_base64(path: str) -> Optional[str]:
     with open(path, "rb") as f:
         b64 = base64.b64encode(f.read()).decode("utf-8")
     return f"data:{mime};base64,{b64}"
+
+def bytes_to_data_uri_png(png_bytes: bytes) -> str:
+    b64 = base64.b64encode(png_bytes).decode("utf-8")
+    return f"data:image/png;base64,{b64}"
 
 def text_color_for_bg(hex_color: str) -> str:
     h = (hex_color or "").lstrip("#")
@@ -158,15 +170,107 @@ def qr_png_bytes(url: str) -> bytes:
     img.save(buf, format="PNG")
     return buf.getvalue()
 
-def folium_inline_parts(m: folium.Map) -> Tuple[str, str]:
+# =========================
+# STATIC MAP (PER STAMPA HTML AFFIDABILE)
+# =========================
+def _extract_points_latest_by_team(df: pd.DataFrame) -> List[Tuple[float, float, str]]:
     """
-    Estrae header (css/js) e body (div+script) della mappa,
-    evitando iframe: più affidabile in stampa HTML.
+    Ritorna (lat, lon, label) con ultima posizione per squadra (dedup).
     """
-    root = m.get_root()
-    header = root.header.render()
-    body = root.html.render() + root.script.render()
-    return header, body
+    points = []
+    if df.empty:
+        return points
+
+    # df è in ordine "brogliaccio" (noi inseriamo in testa), quindi per latest basta primo che ha pos per squadra
+    seen = set()
+    for _, row in df.iterrows():
+        sq = (row.get("sq") or "").strip()
+        pos = row.get("pos")
+        if not sq or sq in seen:
+            continue
+        if isinstance(pos, list) and len(pos) == 2:
+            try:
+                lat, lon = float(pos[0]), float(pos[1])
+            except Exception:
+                continue
+            stt = (row.get("st") or "").strip()
+            label = f"{sq} · {stt}" if stt else sq
+            points.append((lat, lon, label))
+            seen.add(sq)
+    return points
+
+def _extract_points_all_events(df: pd.DataFrame) -> List[Tuple[float, float, str]]:
+    """
+    Ritorna (lat, lon, label) per tutti gli eventi con GPS (anche ripetuti).
+    """
+    points = []
+    if df.empty:
+        return points
+    for _, row in df.iterrows():
+        pos = row.get("pos")
+        if isinstance(pos, list) and len(pos) == 2:
+            try:
+                lat, lon = float(pos[0]), float(pos[1])
+            except Exception:
+                continue
+            sq = (row.get("sq") or "").strip()
+            ora = (row.get("ora") or "").strip()
+            stt = (row.get("st") or "").strip()
+            label = " · ".join([x for x in [sq, ora, stt] if x])
+            points.append((lat, lon, label if label else "Evento"))
+    return points
+
+def _extract_polyline_all_events(df: pd.DataFrame) -> List[Tuple[float, float]]:
+    """
+    Lista ordinata di punti (lat,lon) per disegnare una traccia.
+    """
+    line = []
+    if df.empty:
+        return line
+    # qui metto cronologico: df è newest->oldest, quindi invertiamo
+    for _, row in df.iloc[::-1].iterrows():
+        pos = row.get("pos")
+        if isinstance(pos, list) and len(pos) == 2:
+            try:
+                lat, lon = float(pos[0]), float(pos[1])
+            except Exception:
+                continue
+            line.append((lat, lon))
+    return line
+
+def render_static_map_png(
+    points: List[Tuple[float, float, str]],
+    polyline: Optional[List[Tuple[float, float]]] = None,
+    size: Tuple[int, int] = (1200, 700),
+    zoom: int = 14,
+) -> Optional[bytes]:
+    """
+    Ritorna PNG bytes di una mappa statica (stampabile).
+    Richiede: staticmap + pillow + requests.
+    """
+    try:
+        from staticmap import StaticMap, CircleMarker, Line  # type: ignore
+    except Exception:
+        return None
+
+    try:
+        smap = StaticMap(size[0], size[1], url_template="https://a.tile.openstreetmap.org/{z}/{x}/{y}.png")
+        # linea (percorso)
+        if polyline and len(polyline) >= 2:
+            smap.add_line(Line(polyline, "#111827", 3))  # colore scuro, spessore 3
+
+        # marker
+        for (lat, lon, label) in points:
+            # marker blu
+            smap.add_marker(CircleMarker((lon, lat), "#2563eb", 10))
+            # (staticmap non stampa label sul tile; ma almeno i punti ci sono)
+
+        image = smap.render(zoom=zoom)
+        buf = BytesIO()
+        image.save(buf, format="PNG")
+        return buf.getvalue()
+    except Exception:
+        return None
 
 def make_html_report_bytes(
     squads: Dict[str, Any],
@@ -174,6 +278,13 @@ def make_html_report_bytes(
     center: list,
     meta: dict,
 ) -> bytes:
+    """
+    HTML con:
+    - selettore squadra (TUTTE o singola)
+    - selettore MAPPA (Ultime posizioni / Tutti eventi / Percorso)
+    - checkbox "Stampa con mappa"
+    MAPPA in HTML è un'IMMAGINE base64 -> stampa sempre.
+    """
     df_all = pd.DataFrame(brogliaccio)
 
     def _safe(s: str) -> str:
@@ -184,30 +295,61 @@ def make_html_report_bytes(
             return "<div class='muted'>Nessun dato presente.</div>"
         return df_view.to_html(index=False, classes="tbl", escape=True)
 
-    folium_headers = []
-
-    def _folium_body_for_df(df: pd.DataFrame) -> str:
-        m = build_folium_map_from_df(df, center=center, zoom=14)
-        h, b = folium_inline_parts(m)
-        folium_headers.append(h)
-        return b
-
     ev_data = _safe(str(meta.get("ev_data", "")))
     ev_tipo = _safe(str(meta.get("ev_tipo", "")))
     ev_nome = _safe(str(meta.get("ev_nome", "")))
     ev_desc = _safe(str(meta.get("ev_desc", "")))
     op_name = _safe(str(meta.get("op_name", "")))
 
-    sections_html = []
     options_html = ["<option value='TUTTE'>TUTTE</option>"]
+    sections_html = []
 
-    # TUTTE
+    # helper: produce 3 map images for a df
+    def _maps_for_df(df_x: pd.DataFrame) -> Dict[str, str]:
+        """
+        returns dict: {LATEST: datauri, ALL: datauri, TRACK: datauri} or placeholders
+        """
+        # LATEST
+        pts_latest = _extract_points_latest_by_team(df_x) if "sq" in df_x.columns else _extract_points_all_events(df_x)
+        # se df_x è filtrato per squadra, latest_by_team = 1 punto (ok); se totale = multi-squadre (ok)
+        png_latest = render_static_map_png(pts_latest, polyline=None, zoom=14)
+
+        # ALL
+        pts_all = _extract_points_all_events(df_x)
+        png_all = render_static_map_png(pts_all, polyline=None, zoom=14)
+
+        # TRACK (percorso)
+        line = _extract_polyline_all_events(df_x)
+        # per track: punti = punti all (così si vedono anche marker)
+        png_track = render_static_map_png(pts_all, polyline=line if len(line) >= 2 else None, zoom=14)
+
+        def _placeholder(text: str) -> str:
+            # immagine "finta" via SVG (stampa sicuro)
+            svg = f"""
+            <svg xmlns='http://www.w3.org/2000/svg' width='1200' height='700'>
+              <rect width='100%' height='100%' fill='#f8fafc'/>
+              <rect x='20' y='20' width='1160' height='660' rx='18' fill='#ffffff' stroke='#cbd5e1' stroke-width='3'/>
+              <text x='60' y='120' font-family='Arial' font-size='44' font-weight='900' fill='#0f172a'>MAPPA NON DISPONIBILE</text>
+              <text x='60' y='200' font-family='Arial' font-size='28' font-weight='700' fill='#334155'>{_safe(text)}</text>
+              <text x='60' y='260' font-family='Arial' font-size='24' font-weight='700' fill='#64748b'>Installa staticmap in requirements.txt per mappe stampabili.</text>
+            </svg>
+            """.encode("utf-8")
+            return "data:image/svg+xml;base64," + base64.b64encode(svg).decode("utf-8")
+
+        out = {}
+        out["LATEST"] = bytes_to_data_uri_png(png_latest) if png_latest else _placeholder("Modalità: ULTIME POSIZIONI")
+        out["ALL"] = bytes_to_data_uri_png(png_all) if png_all else _placeholder("Modalità: TUTTI EVENTI")
+        out["TRACK"] = bytes_to_data_uri_png(png_track) if png_track else _placeholder("Modalità: PERCORSO")
+        return out
+
+    # ====== SEZIONE TUTTE
     df_view_tot = df_for_report(df_all) if not df_all.empty else pd.DataFrame()
     tab_tot = _df_to_html_table(df_view_tot)
-
-    # mappa totale: sempre creata (se c'è almeno un log)
-    map_tot = _folium_body_for_df(df_all) if not df_all.empty else "<div class='muted'>Mappa non disponibile.</div>"
-
+    maps_tot = _maps_for_df(df_all) if not df_all.empty else {
+        "LATEST": "",
+        "ALL": "",
+        "TRACK": "",
+    }
     sections_html.append(f"""
       <section class="rep" id="rep_TUTTE">
         <div class="h2">REPORT TOTALE</div>
@@ -219,18 +361,35 @@ def make_html_report_bytes(
         </div>
         <div class="desc"><b>Descrizione:</b> {ev_desc}</div>
         <hr/>
+
         <div class="mapblock">
-          <div class="h3">📍 MAPPA</div>
-          <div class="mapwrap">{map_tot}</div>
+          <div class="h3">🗺️ MAPPA (seleziona cosa stampare)</div>
+
+          <div class="mapmode">
+            <label>Modalità mappa:</label>
+            <select class="selMap" onchange="setMapModeForSection('rep_TUTTE', this.value)">
+              <option value="LATEST">Ultime posizioni (per squadra)</option>
+              <option value="ALL">Tutti eventi (punti)</option>
+              <option value="TRACK">Percorso (linea + punti)</option>
+            </select>
+          </div>
+
+          <div class="mapwrap">
+            <img class="mapimg map-LATEST" src="{maps_tot.get('LATEST','')}" alt="mappa latest"/>
+            <img class="mapimg map-ALL" src="{maps_tot.get('ALL','')}" alt="mappa all"/>
+            <img class="mapimg map-TRACK" src="{maps_tot.get('TRACK','')}" alt="mappa track"/>
+          </div>
         </div>
+
         <div class="h3">📋 LOG</div>
         {tab_tot}
       </section>
     """)
 
-    # SQUADRE
+    # ====== SEZIONI SQUADRA
     for sq in sorted(list(squads.keys())):
         options_html.append(f"<option value='{_safe(sq)}'>{_safe(sq)}</option>")
+
         if df_all.empty:
             df_sq = pd.DataFrame()
         else:
@@ -239,18 +398,15 @@ def make_html_report_bytes(
         df_view_sq = df_for_report(df_sq) if not df_sq.empty else pd.DataFrame()
         tab_sq = _df_to_html_table(df_view_sq)
 
-        has_pos = False
-        if not df_sq.empty and "pos" in df_sq.columns:
-            for p in df_sq["pos"].tolist():
-                if isinstance(p, list) and len(p) == 2:
-                    has_pos = True
-                    break
-
-        map_sq = _folium_body_for_df(df_sq) if (not df_sq.empty and has_pos) else "<div class='muted'>Mappa non disponibile (nessun GPS).</div>"
-
         capo = _safe((squads.get(sq, {}) or {}).get("capo", "") or "—")
         tel = _safe((squads.get(sq, {}) or {}).get("tel", "") or "—")
         stato = _safe((squads.get(sq, {}) or {}).get("stato", "") or "—")
+
+        maps_sq = _maps_for_df(df_sq) if not df_sq.empty else {
+            "LATEST": "",
+            "ALL": "",
+            "TRACK": "",
+        }
 
         sections_html.append(f"""
           <section class="rep" id="rep_{_safe(sq)}">
@@ -268,17 +424,30 @@ def make_html_report_bytes(
             </div>
             <div class="desc"><b>Descrizione:</b> {ev_desc}</div>
             <hr/>
+
             <div class="mapblock">
-              <div class="h3">📍 MAPPA</div>
-              <div class="mapwrap">{map_sq}</div>
+              <div class="h3">🗺️ MAPPA EVENTI SQUADRA (scegli cosa stampare)</div>
+
+              <div class="mapmode">
+                <label>Modalità mappa:</label>
+                <select class="selMap" onchange="setMapModeForSection('rep_{_safe(sq)}', this.value)">
+                  <option value="LATEST">Ultimo punto squadra</option>
+                  <option value="ALL">Tutti eventi (punti)</option>
+                  <option value="TRACK">Percorso (linea + punti)</option>
+                </select>
+              </div>
+
+              <div class="mapwrap">
+                <img class="mapimg map-LATEST" src="{maps_sq.get('LATEST','')}" alt="mappa latest"/>
+                <img class="mapimg map-ALL" src="{maps_sq.get('ALL','')}" alt="mappa all"/>
+                <img class="mapimg map-TRACK" src="{maps_sq.get('TRACK','')}" alt="mappa track"/>
+              </div>
             </div>
+
             <div class="h3">📋 LOG</div>
             {tab_sq}
           </section>
         """)
-
-    # togli duplicati header folium
-    folium_headers_unique = "".join(dict.fromkeys(folium_headers))
 
     html = f"""<!doctype html>
 <html lang="it">
@@ -323,10 +492,7 @@ def make_html_report_bytes(
     padding: 10px 14px; border-radius: 12px; border: 1px solid rgba(255,255,255,.22);
     background: #111827; color: white; font-weight: 900; cursor: pointer;
   }}
-  .btn.secondary {{
-    background: #334155;
-  }}
-
+  .btn.secondary {{ background: #334155; }}
   .toggle {{
     display:flex; align-items:center; gap:10px;
     background: rgba(255,255,255,.10);
@@ -355,6 +521,26 @@ def make_html_report_bytes(
   .desc {{ margin-top: 8px; color: var(--ink); font-weight: 700; }}
   hr {{ border: none; border-top: 1px solid rgba(15,23,42,.12); margin: 12px 0; }}
 
+  .mapmode {{
+    display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+    background: #f1f5f9;
+    border: 1px solid rgba(15,23,42,.10);
+    border-radius: 12px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+  }}
+  .mapwrap {{
+    border: 1px solid rgba(15,23,42,.12);
+    border-radius: 14px;
+    overflow: hidden;
+    background: #fff;
+  }}
+  .mapimg {{
+    width: 100%;
+    height: auto;
+    display: none;
+  }}
+
   .tbl {{
     width: 100%;
     border-collapse: collapse;
@@ -374,19 +560,7 @@ def make_html_report_bytes(
   }}
   .muted {{ color: var(--muted); font-weight: 800; }}
 
-  .mapwrap {{
-    border: 1px solid rgba(15,23,42,.12);
-    border-radius: 14px;
-    overflow: hidden;
-    background: #fff;
-  }}
-  /* Leaflet container dentro folium */
-  .folium-map {{
-    width: 100% !important;
-    height: 440px !important;
-  }}
-
-  /* Print: nasconde controlli, stampa SOLO la sezione selezionata */
+  /* Print */
   @media print {{
     body {{ background: white; }}
     .top .controls {{ display:none !important; }}
@@ -395,21 +569,16 @@ def make_html_report_bytes(
     .rep {{ display:none; }}
     .rep.printme {{ display:block !important; }}
     .tbl th {{ position: static; }}
-    .folium-map {{ height: 520px !important; }}
-    /* se stampa senza mappa */
     .no-map .mapblock {{ display:none !important; }}
   }}
 </style>
-
-{folium_headers_unique}
-
 </head>
 
 <body>
   <div class="wrap">
     <div class="top">
       <div class="title">Protezione Civile Thiene — Report Radio Manager</div>
-      <div class="sub">Seleziona cosa stampare. Puoi stampare con mappa oppure senza mappa.</div>
+      <div class="sub">Seleziona cosa stampare. La mappa è un'immagine: in stampa esce sempre.</div>
 
       <div class="controls">
         <label for="sel">Seleziona stampa:</label>
@@ -438,15 +607,54 @@ def make_html_report_bytes(
     }});
   }}
 
+  function toggleMapClass(){{
+    const withMap = document.getElementById('chkMap').checked;
+    const body = document.body;
+    if(withMap) body.classList.remove('no-map');
+    else body.classList.add('no-map');
+  }}
+
+  function setMapModeForSection(sectionId, mode){{
+    const sec = document.getElementById(sectionId);
+    if(!sec) return;
+
+    // nascondi tutte
+    sec.querySelectorAll('.mapimg').forEach(img => img.style.display = 'none');
+
+    // mostra quella scelta
+    const img = sec.querySelector('.map-' + mode);
+    if(img) img.style.display = 'block';
+
+    // salva su dataset per stampa coerente
+    sec.dataset.mapmode = mode;
+  }}
+
+  function ensureDefaultMapVisible(sectionId){{
+    const sec = document.getElementById(sectionId);
+    if(!sec) return;
+    const current = sec.dataset.mapmode || 'LATEST';
+    setMapModeForSection(sectionId, current);
+
+    // allinea select
+    const sel = sec.querySelector('.selMap');
+    if(sel) sel.value = current;
+  }}
+
   function showSection(){{
     const v = document.getElementById('sel').value;
     hideAllSections();
+
     const sec = document.getElementById('rep_' + v);
     if(sec){{
       sec.style.display = 'block';
       sec.classList.add('printme');
+
+      // assicura che una mappa sia visibile (se mappa attiva)
+      ensureDefaultMapVisible('rep_' + v);
+
       window.scrollTo(0, sec.offsetTop - 10);
     }}
+
     toggleMapClass();
   }}
 
@@ -454,31 +662,23 @@ def make_html_report_bytes(
     document.querySelectorAll('.rep').forEach(s => {{
       s.classList.remove('printme');
       s.style.display = 'block';
+
+      // assicura mappa visibile per ogni sezione
+      ensureDefaultMapVisible(s.id);
     }});
     toggleMapClass();
     window.scrollTo(0, 0);
   }}
 
-  function toggleMapClass(){{
-    const withMap = document.getElementById('chkMap').checked;
-    const body = document.body;
-    if(withMap){{
-      body.classList.remove('no-map');
-    }} else {{
-      body.classList.add('no-map');
-    }}
-  }}
-
   function doPrint(){{
     showSection();
-
-    // Attendi un attimo per far caricare/renderizzare bene Leaflet prima della stampa
     setTimeout(() => {{
       window.print();
-    }}, 1200);
+    }}, 300);
   }}
 
   (function init(){{
+    // default: mostra totale
     showSection();
   }})();
 </script>
@@ -586,8 +786,7 @@ for _, info in st.session_state.squadre.items():
         info["token"] = uuid.uuid4().hex
 
 # =========================
-# AUTO BASE URL (se disponibile)
-# opzionale: pip install streamlit-js-eval
+# AUTO BASE URL (opzionale: streamlit-js-eval)
 # =========================
 try:
     from streamlit_js_eval import get_page_location  # type: ignore
@@ -876,7 +1075,7 @@ with st.sidebar:
                     token = st.session_state.squadre[team].get("token", "")
 
                     if not base_url.startswith("http"):
-                        st.warning("⚠️ Imposta (o lascia auto) l'URL base: https://…streamlit.app")
+                        st.warning("⚠️ Imposta l'URL base: https://…streamlit.app")
                     else:
                         link = f"{base_url}/?mode=campo&team={team}&token={token}"
                         st.code(link, language="text")
@@ -929,7 +1128,7 @@ with st.sidebar:
 
         st.divider()
         st.markdown("## 🌐 URL APP (per QR)")
-        st.caption("Se hai installato streamlit-js-eval si compila da solo; altrimenti incolla l'URL.")
+        st.caption("Se hai streamlit-js-eval si compila da solo; altrimenti incolla l'URL.")
         st.session_state.BASE_URL = st.text_input(
             "Base URL Streamlit Cloud",
             value=(st.session_state.get("BASE_URL") or ""),
@@ -1195,9 +1394,12 @@ with t_rep:
         csv = df_f.to_csv(index=False).encode("utf-8")
         st.download_button("⬇️ Scarica CSV filtrato", data=csv, file_name="brogliaccio.csv", mime="text/csv")
 
-    # ✅ HTML REPORT CON STAMPA + MAPPA (flag dentro l'HTML: con mappa / senza mappa)
+    # ✅ HTML REPORT con selettori:
+    # - squadra
+    # - stampa con/senza mappa
+    # - mappa: ultime posizioni / tutti eventi / percorso
     st.divider()
-    st.subheader("🖨️ Report HTML con selettore stampa (con mappa / senza mappa)")
+    st.subheader("🖨️ Report HTML (stampa con/senza mappa + selettore mappa eventi squadra)")
 
     meta = {
         "ev_data": str(st.session_state.ev_data),
@@ -1215,13 +1417,13 @@ with t_rep:
     )
 
     st.download_button(
-        "⬇️ Scarica REPORT HTML (stampa con/senza mappa)",
+        "⬇️ Scarica REPORT HTML (mappa stampabile + selettore)",
         data=html_bytes,
         file_name="report_radio_manager.html",
         mime="text/html",
     )
 
-    st.caption("Apri l'HTML con Chrome/Edge → scegli squadra → spunta o togli 'Stampa con mappa' → STAMPA.")
+    st.caption("Apri l'HTML → scegli squadra → scegli modalità mappa (Ultime/Tutti/Percorso) → STAMPA con/senza mappa.")
     st.markdown("</div>", unsafe_allow_html=True)
 
 # =========================

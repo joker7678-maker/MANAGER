@@ -1513,42 +1513,44 @@ with t_rad:
         </div>""", unsafe_allow_html=True)
 
         else:
-            # stato persistente della frase (composizione con tastiera)
+            # composizione con tastiera (lettere + numeri)
             if "nato_phrase" not in st.session_state:
                 st.session_state.nato_phrase = ""
 
-            st.markdown("### 🅰️ Tastiera NATO")
+            # 🔝 USCITA FRASE SOPRA
+            if st.session_state.nato_phrase:
+                st.success(f"📤 Frase: **{st.session_state.nato_phrase}**")
+            else:
+                st.info("Componi la frase cliccando i tasti NATO")
 
             st.markdown("<div class='nato-kbd'>", unsafe_allow_html=True)
 
+            # LETTERE
             letters = list(NATO.keys())
-            rows = [letters[i:i+7] for i in range(0, len(letters), 7)]
-
+            rows = [letters[i:i+6] for i in range(0, len(letters), 6)]
             for row in rows:
                 cols = st.columns(len(row))
                 for c, letter in zip(cols, row):
-                    if c.button(f"{letter} {NATO[letter]}", use_container_width=True, key=f"nato_key_{letter}"):
+                    if c.button(f"{letter}\n{NATO[letter]}", use_container_width=True, key=f"nato_key_{letter}"):
                         st.session_state.nato_phrase += letter
 
-
+            st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
             st.markdown("#### 🔢 Numeri")
             digits = list("0123456789")
             drows = [digits[i:i+5] for i in range(0, len(digits), 5)]
             for row in drows:
-                dcols = st.columns(len(row))
-                for c, d in zip(dcols, row):
-                    if c.button(f"{d} {NATO_NUM[d]}", use_container_width=True, key=f"nato_digit_{d}"):st.session_state.nato_phrase += d
-            c1, c2 = st.columns(2)
-            if c1.button("⌫ Cancella ultimo", use_container_width=True):
-                st.session_state.nato_phrase = st.session_state.nato_phrase[:-1]
-            if c2.button("🔄 Reset", use_container_width=True):
-                st.session_state.nato_phrase = ""
+                cols = st.columns(len(row))
+                for c, d in zip(cols, row):
+                    if c.button(f"{d}\n{NATO_NUM[d]}", use_container_width=True, key=f"nato_digit_{d}"):
+                        st.session_state.nato_phrase += d
 
-            if st.session_state.nato_phrase:
-                st.success(f"✅ Frase: **{st.session_state.nato_phrase}**")
-                st.caption("Composizione tramite tastiera NATO (A–Z).")
-            else:
-                st.caption("Clicca le lettere per comporre la frase.")
+            st.markdown("</div>", unsafe_allow_html=True)
+
+            c1, c2 = st.columns(2)
+            if c1.button("⌫ Cancella ultimo", use_container_width=True, key="nato_back"):
+                st.session_state.nato_phrase = st.session_state.nato_phrase[:-1]
+            if c2.button("🔄 Reset", use_container_width=True, key="nato_reset"):
+                st.session_state.nato_phrase = ""
         st.markdown("</div>", unsafe_allow_html=True)
 
 with t_rep:

@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 from datetime import datetime
 import folium
@@ -924,6 +925,35 @@ require_login()
 # =========================
 st.markdown("""
 <style>
+/* ===== VISIBILITÀ BOTTONI (anche in modalità scura smartphone) ===== */
+div.stButton > button,
+div[data-testid="stFormSubmitButton"] > button{
+  background: linear-gradient(180deg, #1d4ed8 0%, #0b1f3a 100%) !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(255,255,255,.22) !important;
+  border-radius: 14px !important;
+  font-weight: 950 !important;
+}
+div.stButton > button:hover,
+div[data-testid="stFormSubmitButton"] > button:hover{
+  filter: brightness(1.06) !important;
+}
+div.stDownloadButton > button{
+  background: linear-gradient(180deg, #fde68a 0%, #fbbf24 100%) !important;
+  color: #0b1220 !important;
+  border: 1px solid rgba(15,23,42,.18) !important;
+  border-radius: 14px !important;
+  font-weight: 950 !important;
+}
+@media (max-width: 640px){
+  div.stButton > button,
+  div[data-testid="stFormSubmitButton"] > button,
+  div.stDownloadButton > button{
+    padding: 0.9rem 1rem !important;
+    font-size: 1.05rem !important;
+  }
+}
+
 header[data-testid="stHeader"] { background: transparent; border:none; }
 .stApp { background: linear-gradient(180deg,#e9eef3 0%, #dfe7ee 100%); color:#0b1220; }
 .block-container { padding-top: 1.2rem; padding-bottom: 2rem; }
@@ -1068,6 +1098,46 @@ section[data-testid="stSidebar"] .stDownloadButton > button{
 # SIDEBAR
 # =========================
 with st.sidebar:
+    # ⏱️ OROLOGIO (tempo reale)
+    components.html(
+        """
+        <div style="
+            width:100%;
+            padding:14px 12px;
+            border-radius:16px;
+            background: linear-gradient(135deg, #0d47a1 0%, #0b1f3a 80%);
+            border: 1px solid rgba(255,255,255,.18);
+            box-shadow: 0 10px 28px rgba(2,6,23,.14);
+            color:white;
+            text-align:center;
+            margin-bottom: 10px;">
+          <div style="font-weight:900;letter-spacing:.8px;opacity:.9;font-size:.85rem;text-transform:uppercase;">
+            🕒 ORA LOCALE
+          </div>
+          <div id="pcClock" style="font-weight:950;font-size:2.0rem;line-height:1.1;margin-top:4px;">
+            --:--:--
+          </div>
+          <div id="pcDate" style="font-weight:800;opacity:.88;font-size:.95rem;margin-top:4px;">
+            --
+          </div>
+        </div>
+        <script>
+          function pcTick(){
+            const now = new Date();
+            const t = new Intl.DateTimeFormat('it-IT', {hour:'2-digit', minute:'2-digit', second:'2-digit'}).format(now);
+            const d = new Intl.DateTimeFormat('it-IT', {weekday:'long', year:'numeric', month:'long', day:'2-digit'}).format(now);
+            const elT = document.getElementById('pcClock');
+            const elD = document.getElementById('pcDate');
+            if(elT) elT.textContent = t;
+            if(elD) elD.textContent = d;
+          }
+          pcTick();
+          setInterval(pcTick, 1000);
+        </script>
+        """,
+        height=150,
+    )
+
     st.markdown("## 🛡️ NAVIGAZIONE")
 
     if st.session_state.get("field_ok"):

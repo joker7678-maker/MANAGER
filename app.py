@@ -1481,50 +1481,23 @@ with t_rad:
                     out_chars.append(key[:1])
             return "".join(out_chars)
 
-        if mode == "Testo → NATO":
-            testo_nato = st.text_input(
-                "Scrivi testo / nominativo / codice",
-                placeholder="Es. DAVIDE 21 / SQUADRA ALFA",
-                key="nato_input_text",
-            )
+       if mode == "Testo → NATO":
+    testo_nato = st.text_input(
+        "Scrivi testo / nominativo / codice",
+        placeholder="Es. DAVIDE 21 / SQUADRA ALFA",
+        key="nato_input_text",
+    )
 
-            if testo_nato.strip():
-                st.markdown(render_nato_grid_from_text(testo_nato), unsafe_allow_html=True)
-            else:
-                st.markdown("""<div class="nato-mini">
-          <div class="nato-chip"><div class="nato-letter">A</div><div class="nato-word">Alfa</div></div>
-          <div class="nato-chip"><div class="nato-letter">B</div><div class="nato-word">Bravo</div></div>
-          <div class="nato-chip"><div class="nato-letter">C</div><div class="nato-word">Charlie</div></div>
-          <div class="nato-chip"><div class="nato-letter">D</div><div class="nato-word">Delta</div></div>
-          <div class="nato-chip"><div class="nato-letter">E</div><div class="nato-word">Echo</div></div>
-          <div class="nato-chip"><div class="nato-letter">F</div><div class="nato-word">Foxtrot</div></div>
-          <div class="nato-chip"><div class="nato-letter">G</div><div class="nato-word">Golf</div></div>
-          <div class="nato-chip"><div class="nato-letter">H</div><div class="nato-word">Hotel</div></div>
-          <div class="nato-chip"><div class="nato-letter">I</div><div class="nato-word">India</div></div>
-          <div class="nato-chip"><div class="nato-letter">J</div><div class="nato-word">Juliett</div></div>
-          <div class="nato-chip"><div class="nato-letter">K</div><div class="nato-word">Kilo</div></div>
-          <div class="nato-chip"><div class="nato-letter">L</div><div class="nato-word">Lima</div></div>
-          <div class="nato-chip"><div class="nato-letter">M</div><div class="nato-word">Mike</div></div>
-          <div class="nato-chip"><div class="nato-letter">N</div><div class="nato-word">November</div></div>
-          <div class="nato-chip"><div class="nato-letter">O</div><div class="nato-word">Oscar</div></div>
-          <div class="nato-chip"><div class="nato-letter">P</div><div class="nato-word">Papa</div></div>
-          <div class="nato-chip"><div class="nato-letter">Q</div><div class="nato-word">Quebec</div></div>
-          <div class="nato-chip"><div class="nato-letter">R</div><div class="nato-word">Romeo</div></div>
-          <div class="nato-chip"><div class="nato-letter">S</div><div class="nato-word">Sierra</div></div>
-          <div class="nato-chip"><div class="nato-letter">T</div><div class="nato-word">Tango</div></div>
-          <div class="nato-chip"><div class="nato-letter">U</div><div class="nato-word">Uniform</div></div>
-          <div class="nato-chip"><div class="nato-letter">V</div><div class="nato-word">Victor</div></div>
-          <div class="nato-chip"><div class="nato-letter">W</div><div class="nato-word">Whiskey</div></div>
-          <div class="nato-chip"><div class="nato-letter">X</div><div class="nato-word">X-ray</div></div>
-          <div class="nato-chip"><div class="nato-letter">Y</div><div class="nato-word">Yankee</div></div>
-          <div class="nato-chip"><div class="nato-letter">Z</div><div class="nato-word">Zulu</div></div>
-        </div>""", unsafe_allow_html=True)
+    if testo_nato.strip():
+        st.markdown(render_nato_grid_from_text(testo_nato), unsafe_allow_html=True)
+    else:
+        st.markdown(ALFABETO_NATO_HTML, unsafe_allow_html=True)
 
 else:
     if "nato_phrase" not in st.session_state:
         st.session_state.nato_phrase = ""
 
-    # 🔝 USCITA FRASE SOPRA
+    # USCITA FRASE SOPRA
     if st.session_state.nato_phrase:
         st.success(f"📤 Frase: **{st.session_state.nato_phrase}**")
     else:
@@ -1532,7 +1505,7 @@ else:
 
     st.markdown("### 📻 Tastiera NATO")
 
-    # ===== LETTERE NATO (chip veri cliccabili) =====
+    # LETTERE
     letters = list(NATO.items())
     rows = [letters[i:i+6] for i in range(0, len(letters), 6)]
     for row in rows:
@@ -1552,6 +1525,35 @@ else:
                     unsafe_allow_html=True,
                 )
                 st.markdown("</div>", unsafe_allow_html=True)
+
+    # NUMERI
+    st.markdown("#### 🔢 Numeri")
+    nums = list(NATO_NUM.items())
+    rows = [nums[i:i+5] for i in range(0, len(nums), 5)]
+    for row in rows:
+        cols = st.columns(len(row))
+        for c, (num, word) in zip(cols, row):
+            with c:
+                st.markdown("<div class='nato-key-wrap'>", unsafe_allow_html=True)
+                if st.button(" ", key=f"nato_num_{num}", use_container_width=True):
+                    st.session_state.nato_phrase += num
+                st.markdown(
+                    f"""
+                    <div class="nato-chip nato-spell">
+                        <div class="nato-letter">{num}</div>
+                        <div class="nato-word">{word}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                st.markdown("</div>", unsafe_allow_html=True)
+
+    c1, c2 = st.columns(2)
+    if c1.button("⌫ Cancella ultimo", use_container_width=True):
+        st.session_state.nato_phrase = st.session_state.nato_phrase[:-1]
+    if c2.button("🔄 Reset", use_container_width=True):
+        st.session_state.nato_phrase = ""
+
 
     # ===== NUMERI NATO (chip veri cliccabili) =====
     st.markdown("#### 🔢 Numeri")

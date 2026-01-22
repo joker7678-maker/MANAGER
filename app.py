@@ -1144,41 +1144,47 @@ section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"]{
   background: transparent !important;
   border: none !important;
 }
+
+/* Card (contenitore) in blu molto chiaro */
 section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"] > details{
-  background: #ffffff !important;
-  border: 1px solid rgba(15,23,42,.18) !important;
+  background: #eaf2ff !important; /* blu chiaro */
+  border: 1px solid rgba(15,23,42,.16) !important;
   border-radius: 14px !important;
   margin: 10px 0 !important;
   overflow: hidden !important;
   box-shadow: 0 10px 22px rgba(2,6,23,.12) !important;
 }
+
+/* Barra titolo: blu (per leggere bene freccia bianca) */
 section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"] > details > summary{
-  background: linear-gradient(180deg, #ffffff 0%, #f1f5f9 100%) !important;
-  color: #0b1220 !important;
+  background: linear-gradient(180deg, #2b6de6 0%, #1f58c8 100%) !important;
+  color: #ffffff !important;
   font-weight: 950 !important;
   padding: 10px 12px !important;
-  border-bottom: 1px solid rgba(15,23,42,.10) !important;
+  border-bottom: 1px solid rgba(255,255,255,.18) !important;
 }
 
-/* forza colore testo anche su elementi interni generati da Streamlit */
+/* forza colore testo nel titolo (Streamlit inserisce <p>/<span>) */
 section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"] > details > summary *{
-  color: #0b1220 !important;
+  color: #ffffff !important;
   opacity: 1 !important;
   filter: none !important;
 }
-section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"] > details > summary p,
-section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"] > details > summary span{
-  color: #0b1220 !important;
+
+/* Freccetta/chevron: bianca e ben visibile */
+section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"] > details > summary svg{
+  display: block !important;
+  color: #ffffff !important;
+}
+section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"] > details > summary svg *{
+  stroke: #ffffff !important;
+  fill: none !important;
   opacity: 1 !important;
 }
 
-/* Nascondi chevron/freccia: usiamo i pallini (emoji) nel titolo */
-section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"] > details > summary svg{
-  display: none !important;
-}
-
-/* Testi nel contenuto expander: forzati scuri (senza toccare i chip) */
+/* Corpo expander: sfondo ancora più chiaro, testo scuro */
 section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"] [data-testid="stExpanderDetails"]{
+  background: #f6f9ff !important;
   color: #0b1220 !important;
 }
 section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"] [data-testid="stMarkdownContainer"] p,

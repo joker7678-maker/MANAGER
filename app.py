@@ -1159,17 +1159,35 @@ section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"] > det
   padding: 10px 12px !important;
   border-bottom: 1px solid rgba(15,23,42,.10) !important;
 }
+
+/* Nascondi chevron/freccia: usiamo i pallini (emoji) nel titolo */
 section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"] > details > summary svg{
-  fill: #0b1220 !important;
+  display: none !important;
+}
+
+/* Testi nel contenuto expander: forzati scuri (senza toccare i chip) */
+section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"] [data-testid="stExpanderDetails"]{
   color: #0b1220 !important;
-  opacity: 1 !important;
 }
 section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"] [data-testid="stMarkdownContainer"] p,
+section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"] [data-testid="stMarkdownContainer"] li,
 section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"] label,
-section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"] span{
+section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"] [data-testid="stCaptionContainer"]{
   color: #0b1220 !important;
 }
-section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"] hr{
+
+/* Bottoni dentro le card squadre: chiari + testo scuro */
+section[data-testid="stSidebar"] .pc-squad-list .stButton > button{
+  background: linear-gradient(180deg, #fde68a 0%, #fbbf24 100%) !important;
+  color: #0b1220 !important;
+  border: 1px solid rgba(15,23,42,.18) !important;
+  border-radius: 12px !important;
+  font-weight: 950 !important;
+}
+section[data-testid="stSidebar"] .pc-squad-list .stButton > button:hover{
+  filter: brightness(0.98);
+}
+section[data-testid="stSidebar"] .pc-squad-list hr{
   border-color: rgba(15,23,42,.12) !important;
 }
 

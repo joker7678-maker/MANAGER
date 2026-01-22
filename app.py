@@ -37,6 +37,22 @@ COLORI_STATI = {
     "Rientrata al Coc": {"color": "green", "hex": "#81c784"},
 }
 
+def status_dot_emoji(stato: str) -> str:
+    s = (stato or '').strip().lower()
+    # mapping semplice e molto visibile su mobile
+    if 'intervento in corso' in s:
+        return '🔴'
+    if 'in uscita' in s:
+        return '🟡'
+    if 'concluso' in s:
+        return '🟣'
+    if 'rientro' in s:
+        return '🟠'
+    if 'rientrata' in s:
+        return '🟢'
+    # default: al COC / attesa
+    return '⚪'
+
 
 # =========================
 # NATO – Spelling radio
@@ -1157,6 +1173,36 @@ section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"] hr{
   border-color: rgba(15,23,42,.12) !important;
 }
 
+
+
+/* ===== Sidebar: Squadre (schede chiare + NO frecce expander) ===== */
+section[data-testid="stSidebar"] details {
+  background: #ffffff !important;
+  border: 1px solid rgba(15,23,42,.18) !important;
+  border-radius: 16px !important;
+  box-shadow: 0 8px 18px rgba(2,6,23,.10) !important;
+  margin: 8px 0 10px 0 !important;
+  overflow: hidden !important;
+}
+section[data-testid="stSidebar"] details > summary {
+  background: #ffffff !important;
+  color: #0b1220 !important;
+  padding: 10px 12px !important;
+  font-weight: 950 !important;
+}
+/* nasconde la freccia/chevron */
+section[data-testid="stSidebar"] details > summary svg {
+  display: none !important;
+}
+section[data-testid="stSidebar"] details > summary::marker,
+section[data-testid="stSidebar"] details > summary::-webkit-details-marker {
+  display: none !important;
+}
+/* contenuto expander */
+section[data-testid="stSidebar"] details > div {
+  background: #ffffff !important;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -1184,7 +1230,7 @@ with st.sidebar:
             capo_txt = inf["capo"] if inf["capo"] else "—"
             tel_txt = inf["tel"] if inf["tel"] else "—"
 
-            with st.expander(f"👥 {team}", expanded=False):
+            with st.expander(f"{status_dot_emoji(inf['stato'])} {team}", expanded=False):
                 st.markdown(chip_stato(inf["stato"]), unsafe_allow_html=True)
                 st.markdown(f"**👤 Capo:** {capo_txt}")
                 st.markdown(f"**📞 Tel:** {tel_txt}")

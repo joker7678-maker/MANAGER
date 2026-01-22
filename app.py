@@ -1305,6 +1305,7 @@ with st.sidebar:
     if ruolo == "SALA OPERATIVA":
         st.markdown("## 👥 SQUADRE")
         st.caption(f"Totale: **{len(st.session_state.squadre)}**")
+        sq_search = st.text_input("🔎 Cerca squadra", placeholder="cerca…", key="sq_search").strip().upper()
 
 
         # --- SQUADRE (sidebar) - lista HTML robusta (non dipende dagli expander Streamlit) ---
@@ -1385,30 +1386,24 @@ with st.sidebar:
         }
         </style>""", unsafe_allow_html=True)
 
-        def _dot_class(stato: str) -> str:
-            s = (stato or "").lower()
-            if any(k in s for k in ["conclus", "rientr", "ok"]): return "pc-dot-green"
-            if any(k in s for k in ["in corso", "intervento", "emerg", "urgen"]): return "pc-dot-red"
-            if any(k in s for k in ["spost", "partit", "in viaggio", "verso"]): return "pc-dot-yellow"
-            if any(k in s for k in ["drone", "aereo", "volo"]): return "pc-dot-blue"
-            if any(k in s for k in ["idrov", "pomp", "allag"]): return "pc-dot-purple"
-            if any(k in s for k in ["sopralluog", "valutaz", "ricogn"]): return "pc-dot-orange"
-            return "pc-dot-gray"
+        def _dot_hex(stato: str) -> str:
+            return COLORI_STATI.get(stato, {}).get("hex", "#64748b")
 
-        squadre_sorted = sorted(list(st.session_state.squadre.keys()))
+        squadre_sorted_all = sorted(list(st.session_state.squadre.keys()))
+        squadre_sorted = [s for s in squadre_sorted_all if (not sq_search or sq_search in s.upper())]
         html_parts = ["<div class='pc-squad-html'>"]
         for team in squadre_sorted:
             inf = get_squadra_info(team)
             capo_txt = (inf.get("capo") or "—")
             tel_txt = (inf.get("tel") or "—")
             stato_txt = (inf.get("stato") or "—")
-            dot = _dot_class(stato_txt)
+            dot_hex = _dot_hex(stato_txt)
             # NB: niente input/widget qui dentro: è solo UI robusta e leggibile
             html_parts.append(
                 f"""<details class='pc-squad-item'>
                     <summary>
                       <span class='pc-chev'>›</span>
-                      <span class='pc-dot {dot}'></span>
+                      <span class='pc-dot' style='background:{dot_hex};'></span>
                       <span>{team}</span>
                       <span class='pc-squad-spacer'></span>
                       <a class='pc-pencil' href='#gestisci' title='Modifica / QR'>✏️</a>
@@ -1508,8 +1503,10 @@ with st.sidebar:
             n_sq = st.text_input("Nome squadra", placeholder="Es. SQUADRA 2 / ALFA / DELTA…")
             capo = st.text_input("Nome caposquadra", placeholder="Es. Rossi Mario")
             tel = st.text_input("Telefono caposquadra", placeholder="Es. 3331234567")
-            submitted = st.form_submit_button("➕ AGGIUNGI SQUADRA")
-        if submitted:
+            c1_add, c2_qr = st.columns(2)
+            submitted = c1_add.form_submit_button("➕ AGGIUNGI")
+            submitted_qr = c2_qr.form_submit_button("📱 CREA + QR")
+        if submitted or submitted_qr:
             nome = (n_sq or "").strip().upper()
             if not nome:
                 st.warning("Inserisci il nome squadra.")
@@ -1524,8 +1521,14 @@ with st.sidebar:
                     "token": token,
                 }
                 save_data_to_disk()
-                st.session_state.team_qr_open = nome
-                st.success("✅ Squadra creata! (QR aperto)")
+                # seleziona subito la nuova squadra nel pannello gestione
+                st.session_state.sidebar_manage_team = nome
+                if submitted_qr:
+                    st.session_state.team_qr_open = nome
+                    st.session_state.team_edit_open = None
+                    st.success("✅ Squadra creata! (QR aperto)")
+                else:
+                    st.success("✅ Squadra creata!")
                 st.rerun()
 
         st.divider()

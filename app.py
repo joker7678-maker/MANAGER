@@ -49,21 +49,6 @@ NATO = {
     "X":"X-ray","Y":"Yankee","Z":"Zulu"
 }
 
-
-# Numeri (pronuncia radio standard)
-NATO_NUM = {
-    "0": "Zero",
-    "1": "One",
-    "2": "Two",
-    "3": "Tree",
-    "4": "Fower",
-    "5": "Fife",
-    "6": "Six",
-    "7": "Seven",
-    "8": "Eight",
-    "9": "Niner",
-}
-
 # =========================
 # QUERY PARAMS (ACCESSO CAMPO)
 # =========================
@@ -600,14 +585,6 @@ def make_html_report_bytes(
   }}
 
 
-
-/* Tastiera NATO (bottoni compatti) */
-.nato-kbd .stButton>button{
-  padding: .15rem .35rem !important;
-  font-size: .72rem !important;
-  line-height: 1.05 !important;
-  border-radius: 10px !important;
-}
 </style>
 </head>
 
@@ -1451,7 +1428,7 @@ with t_rad:
                     out.append(
                         f"<div class='nato-chip nato-spell'>"
                         f"<div class='nato-letter'>{c}</div>"
-                        f"<div class='nato-word'>{NATO_NUM.get(c, "Numero")}</div>"
+                        f"<div class='nato-word'>Numero</div>"
                         f"</div>"
                     )
             return "<div class='nato-mini'>" + "".join(out) + "</div>"
@@ -1512,42 +1489,17 @@ with t_rad:
         </div>""", unsafe_allow_html=True)
 
         else:
-            # stato persistente della frase (composizione con tastiera)
-            if "nato_phrase" not in st.session_state:
-                st.session_state.nato_phrase = ""
-
-            st.markdown("### 🅰️ Tastiera NATO")
-
-            st.markdown("<div class='nato-kbd'>", unsafe_allow_html=True)
-
-            letters = list(NATO.keys())
-            rows = [letters[i:i+7] for i in range(0, len(letters), 7)]
-
-            for row in rows:
-                cols = st.columns(len(row))
-                for c, letter in zip(cols, row):
-                    if c.button(f"{letter} {NATO[letter]}", use_container_width=True, key=f"nato_key_{letter}"):
-                        st.session_state.nato_phrase += letter
-
-
-            st.markdown("#### 🔢 Numeri")
-            digits = list("0123456789")
-            drows = [digits[i:i+5] for i in range(0, len(digits), 5)]
-            for row in drows:
-                dcols = st.columns(len(row))
-                for c, d in zip(dcols, row):
-                    if c.button(f"{d} {NATO_NUM[d]}", use_container_width=True, key=f"nato_digit_{d}"):st.session_state.nato_phrase += d
-            c1, c2 = st.columns(2)
-            if c1.button("⌫ Cancella ultimo", use_container_width=True):
-                st.session_state.nato_phrase = st.session_state.nato_phrase[:-1]
-            if c2.button("🔄 Reset", use_container_width=True):
-                st.session_state.nato_phrase = ""
-
-            if st.session_state.nato_phrase:
-                st.success(f"✅ Frase: **{st.session_state.nato_phrase}**")
-                st.caption("Composizione tramite tastiera NATO (A–Z).")
+            nato_in = st.text_input(
+                "Scrivi le parole NATO",
+                placeholder="Es. Delta Alfa Victor India Delta Echo",
+                key="nato_input_nato",
+            )
+            if nato_in.strip():
+                out = nato_phrase_to_text(nato_in)
+                st.success(f"✅ Frase: **{out}**")
+                st.caption("Puoi separare con spazi, | oppure / (es. Delta|Alfa|Victor).")
             else:
-                st.caption("Clicca le lettere per comporre la frase.")
+                st.caption("Scrivi una sequenza NATO per convertirla in testo.")
         st.markdown("</div>", unsafe_allow_html=True)
 
 with t_rep:

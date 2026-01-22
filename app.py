@@ -581,33 +581,6 @@ def make_html_report_bytes(
     .tbl th {{ position: static; }}
     .no-map .mapblock {{ display:none !important; }}
   }}
-/* NATO solo sala radio – NON stampare */
-.nato-title{
-  margin-top:10px;
-  font-weight:950;
-  color:#0d47a1;
-  font-size:.9rem;
-}
-.nato-mini{
-  display:grid;
-  grid-template-columns:repeat(auto-fill,minmax(74px,1fr));
-  gap:6px;
-  margin-top:10px;
-}
-.nato-chip{
-  background:#f1f5f9;
-  border:1px solid rgba(15,23,42,.15);
-  border-radius:10px;
-  padding:6px;
-  text-align:center;
-  line-height:1.05;
-}
-.nato-letter{font-weight:950;color:#0d47a1}
-.nato-word{font-size:.7rem;color:#334155}
-
-@media print{
-  .nato-title,.nato-mini,.nato-spell{display:none!important;}
-}
 
 </style>
 </head>

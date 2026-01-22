@@ -1050,6 +1050,32 @@ section[data-testid="stSidebar"] .stDownloadButton > button{
   font-weight: 950 !important;
 }
 
+/* Sidebar: expander (frecce/chevron + header più leggibile) */
+section[data-testid="stSidebar"] details[data-testid="stExpander"]{
+  border: 1px solid rgba(255,255,255,.14) !important;
+  border-radius: 14px !important;
+  background: rgba(255,255,255,.06) !important;
+}
+section[data-testid="stSidebar"] details[data-testid="stExpander"] > summary{
+  padding: 10px 12px !important;
+  border-radius: 14px !important;
+  color: #f8fafc !important;
+  font-weight: 950 !important;
+}
+section[data-testid="stSidebar"] details[data-testid="stExpander"] > summary:hover{
+  background: rgba(255,255,255,.08) !important;
+}
+section[data-testid="stSidebar"] details[data-testid="stExpander"] > summary svg,
+section[data-testid="stSidebar"] [data-testid="stExpanderToggleIcon"],
+section[data-testid="stSidebar"] [data-testid="stExpanderToggleIcon"] svg{
+  color: #f8fafc !important;
+  fill: #f8fafc !important;
+  opacity: 1 !important;
+}
+section[data-testid="stSidebar"] details[data-testid="stExpander"] div[data-testid="stMarkdownContainer"] p{
+  color: rgba(248,250,252,.95) !important;
+}
+
 /* NATO mini (solo sala radio) */
 .nato-title{margin-top:10px;font-weight:950;color:#0d47a1;font-size:.9rem;}
 .nato-mini{display:grid;grid-template-columns:repeat(auto-fill,minmax(74px,1fr));gap:6px;margin-top:10px;}
@@ -1081,6 +1107,9 @@ section[data-testid="stSidebar"] .stDownloadButton > button{
   padding: 14px 14px !important;
   font-weight: 950 !important;
   border: 1px solid rgba(15,23,42,.14) !important;
+  /* Visibile anche in modalità scura (telefono) */
+  background: linear-gradient(180deg, #fde68a 0%, #fbbf24 100%) !important;
+  color: #0b1220 !important;
 }
 .capo-mode .stButton > button:hover{ filter: brightness(0.98); }
 .capo-mode textarea, .capo-mode input{
@@ -1110,11 +1139,12 @@ with st.sidebar:
             box-shadow: 0 10px 28px rgba(2,6,23,.14);
             color:white;
             text-align:center;
+            box-sizing:border-box;
             margin-bottom: 10px;">
           <div style="font-weight:900;letter-spacing:.8px;opacity:.9;font-size:.85rem;text-transform:uppercase;">
             🕒 ORA LOCALE
           </div>
-          <div id="pcClock" style="font-weight:950;font-size:2.0rem;line-height:1.1;margin-top:4px;">
+          <div id="pcClock" style="font-weight:950;font-size:1.9rem;line-height:1.15;margin-top:4px;">
             --:--:--
           </div>
           <div id="pcDate" style="font-weight:800;opacity:.88;font-size:.95rem;margin-top:4px;">
@@ -1135,7 +1165,7 @@ with st.sidebar:
           setInterval(pcTick, 1000);
         </script>
         """,
-        height=150,
+        height=190,
     )
 
     st.markdown("## 🛡️ NAVIGAZIONE")

@@ -854,6 +854,21 @@ for _, info in st.session_state.squadre.items():
     if "token" not in info or not info["token"]:
         info["token"] = uuid.uuid4().hex
 
+
+# =========================
+# SYNC MULTI-SESSION (Caposquadra -> Console)
+# =========================
+# Se un caposquadra invia dal proprio link QR, scrive su DATA_PATH.
+# La console vede i nuovi dati al prossimo rerun: qui forziamo un reload quando il file cambia.
+if not st.session_state.get("field_ok"):
+    try:
+        _mtime = os.path.getmtime(DATA_PATH) if os.path.exists(DATA_PATH) else None
+        if _mtime and st.session_state.get("_data_mtime") != _mtime:
+            load_data_from_disk()
+            st.session_state._data_mtime = _mtime
+    except Exception:
+        pass
+
 # =========================
 # AUTO BASE URL (opzionale: streamlit-js-eval)
 # =========================
@@ -1536,10 +1551,11 @@ c5.markdown(metric_box(COLORI_STATI["In attesa al COC"]["hex"], "🏠", "Al COC"
 
 # =========================
 # INBOX APPROVAZIONE
+# (renderizzato sopra la MAPPA)
 # =========================
-if st.session_state.inbox:
-    st.markdown(f"<div class='pc-alert'>⚠️ RICEVUTI {len(st.session_state.inbox)} AGGIORNAMENTI DA VALIDARE</div>", unsafe_allow_html=True)
-
+def render_inbox_approval():
+    if not st.session_state.get('inbox'):
+        return
     for i, data in enumerate(st.session_state.inbox):
         sq_in = data["sq"]
         inf_in = get_squadra_info(sq_in)
@@ -1641,6 +1657,18 @@ with t_rad:
         st.markdown("</div>", unsafe_allow_html=True)
 
     with r:
+        # Avvisi e approvazioni: subito sopra la mappa
+        if st.session_state.get('inbox'):
+            cA, cB = st.columns([1, 0.25])
+            with cA:
+                st.markdown(f"<div class='pc-alert'>⚠️ RICEVUTI {len(st.session_state.inbox)} AGGIORNAMENTI DA VALIDARE</div>", unsafe_allow_html=True)
+            with cB:
+                if st.button('🔄', key='refresh_console', help='Aggiorna dati dalla memoria condivisa'):
+                    load_data_from_disk()
+                    st.rerun()
+            render_inbox_approval()
+            st.divider()
+
         st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
         df_all = pd.DataFrame(st.session_state.brogliaccio)
         m = build_folium_map_from_df(df_all, center=st.session_state.pos_mappa, zoom=14)

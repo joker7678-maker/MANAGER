@@ -1054,6 +1054,7 @@ if "initialized" not in st.session_state:
     st.session_state.open_map_event = None
     st.session_state.team_edit_open = None
     st.session_state.team_qr_open = None
+    st.session_state.edit_event_idx = None
 
     ok = load_data_from_disk()
     ensure_inbox_ids()
@@ -1104,8 +1105,16 @@ try:
     loc = get_page_location()
     if isinstance(loc, dict):
         origin = (loc.get("origin") or "").strip().rstrip("/")
-        if origin and (not st.session_state.get("BASE_URL")):
-            st.session_state.BASE_URL = origin
+        # se l'app è dietro reverse proxy con baseUrlPath, includilo
+        try:
+            base_path = (st.get_option("server.baseUrlPath") or "").strip()
+        except Exception:
+            base_path = ""
+        if base_path and not base_path.startswith("/"):
+            base_path = "/" + base_path
+        effective = (origin + base_path).rstrip("/")
+        if effective and (not st.session_state.get("BASE_URL")):
+            st.session_state.BASE_URL = effective
 except Exception:
     pass
 
@@ -1712,7 +1721,7 @@ with st.sidebar:
                         # Link rapido WhatsApp (utile da PC o da telefono)
                         wa_text = urllib.parse.quote(f"Link modulo caposquadra ({team}): {link}")
                         st.markdown(
-                            f"<a href='https://wa.me/?text={wa_text}' target='_blank' "
+                            f"<a href='https://api.whatsapp.com/send?text={wa_text}' target='_blank' "
                             f"style='text-decoration:none;'>"
                             f"<span style='display:inline-block;padding:.45rem .7rem;border-radius:10px;"
                             f"border:1px solid #90caf9;background:#e3f2fd;color:#0d47a1;font-weight:600;'>"
@@ -2352,7 +2361,7 @@ with t_rep:
 st.markdown("### 📋 REGISTRO EVENTI")
 
 # Registro: modalità tabella (molto più veloce) + dettaglio singolo
-mode_fast = st.toggle("⚡ Modalità veloce (tabella + dettaglio)", value=True, key="log_fast_mode")
+mode_fast = st.toggle("⚡ Modalità veloce (tabella + dettaglio)", value=False, key="log_fast_mode")
 
 # Limite eventi caricati (evita rallentamenti con migliaia di righe)
 _lim_opts = [100, 250, 500, 1000, "Tutti"]
@@ -2482,6 +2491,53 @@ if mode_fast:
                     f"📩 **RIS:** {b.get('ris','')}  \n"
                     f"👤 **OP:** {b.get('op','')}"
                 )
+                # --- Correzione evento (modifica) ---
+                cE1, cE2, cE3 = st.columns([1, 1, 2])
+                if cE1.button("✏️ MODIFICA", key=f"edit_ev_btn_{int(pick)}"):
+                    st.session_state.edit_event_idx = int(pick)
+                    st.rerun()
+                if st.session_state.get("edit_event_idx") == int(pick):
+                    with st.form(f"form_edit_event_{int(pick)}", clear_on_submit=False):
+                        st.markdown("**Modifica campi evento (correzione):**")
+                        new_sq = st.text_input("Squadra", value=str(b.get("sq","") or ""), key=f"edit_sq_{int(pick)}")
+                        new_st = st.text_input("Stato", value=str(b.get("st","") or ""), key=f"edit_st_{int(pick)}")
+                        new_mit = st.text_area("MSG (Mittente)", value=str(b.get("mit","") or ""), key=f"edit_mit_{int(pick)}", height=90)
+                        new_ris = st.text_area("RIS (Risposta)", value=str(b.get("ris","") or ""), key=f"edit_ris_{int(pick)}", height=90)
+                        new_op = st.text_input("Operatore", value=str(b.get("op","") or ""), key=f"edit_op_{int(pick)}")
+                        # GPS
+                        has_gps = isinstance(b.get("pos"), list) and len(b.get("pos")) == 2
+                        lat0 = float(b["pos"][0]) if has_gps else 0.0
+                        lon0 = float(b["pos"][1]) if has_gps else 0.0
+                        gcol1, gcol2, gcol3 = st.columns([1,1,2])
+                        new_lat = gcol1.number_input("Lat", value=lat0, format="%.6f", key=f"edit_lat_{int(pick)}")
+                        new_lon = gcol2.number_input("Lon", value=lon0, format="%.6f", key=f"edit_lon_{int(pick)}")
+                        set_gps = gcol3.checkbox("Salva GPS (se l'evento aveva OMISSIS, ora lo aggiunge)", value=has_gps, key=f"edit_setgps_{int(pick)}")
+
+                        s1, s2 = st.columns(2)
+                        ok_save = s1.form_submit_button("✅ SALVA MODIFICHE")
+                        cancel = s2.form_submit_button("❌ ANNULLA")
+                    if cancel:
+                        st.session_state.edit_event_idx = None
+                        st.rerun()
+                    if ok_save:
+                        b["sq"] = (new_sq or "").strip().upper()
+                        b["st"] = (new_st or "").strip()
+                        b["mit"] = (new_mit or "").strip()
+                        b["ris"] = (new_ris or "").strip()
+                        b["op"] = (new_op or "").strip()
+                        if set_gps:
+                            try:
+                                b["pos"] = [float(new_lat), float(new_lon)]
+                            except Exception:
+                                pass
+                        else:
+                            b["pos"] = None
+                        save_data_to_disk()
+                        st.success("Evento aggiornato.")
+                        st.session_state.edit_event_idx = None
+                        st.rerun()
+                else:
+                    cE2.caption("Correggi un evento se c'è un errore di compilazione.")
 
                 col_a, col_b = st.columns([1, 2])
                 if gps_ok:
@@ -2516,6 +2572,53 @@ else:
                 f"📩 **RIS:** {b.get('ris','')}  \n"
                 f"👤 **OP:** {b.get('op','')}"
             )
+            # --- Correzione evento (modifica) ---
+            cE1, cE2, cE3 = st.columns([1, 1, 2])
+            if cE1.button("✏️ MODIFICA", key=f"edit_ev_btn_{i}"):
+                st.session_state.edit_event_idx = i
+                st.rerun()
+            if st.session_state.get("edit_event_idx") == i:
+                with st.form(f"form_edit_event_{i}", clear_on_submit=False):
+                    st.markdown("**Modifica campi evento (correzione):**")
+                    new_sq = st.text_input("Squadra", value=str(b.get("sq","") or ""), key=f"edit_sq_{i}")
+                    new_st = st.text_input("Stato", value=str(b.get("st","") or ""), key=f"edit_st_{i}")
+                    new_mit = st.text_area("MSG (Mittente)", value=str(b.get("mit","") or ""), key=f"edit_mit_{i}", height=90)
+                    new_ris = st.text_area("RIS (Risposta)", value=str(b.get("ris","") or ""), key=f"edit_ris_{i}", height=90)
+                    new_op = st.text_input("Operatore", value=str(b.get("op","") or ""), key=f"edit_op_{i}")
+                    # GPS
+                    has_gps = isinstance(b.get("pos"), list) and len(b.get("pos")) == 2
+                    lat0 = float(b["pos"][0]) if has_gps else 0.0
+                    lon0 = float(b["pos"][1]) if has_gps else 0.0
+                    gcol1, gcol2, gcol3 = st.columns([1,1,2])
+                    new_lat = gcol1.number_input("Lat", value=lat0, format="%.6f", key=f"edit_lat_{i}")
+                    new_lon = gcol2.number_input("Lon", value=lon0, format="%.6f", key=f"edit_lon_{i}")
+                    set_gps = gcol3.checkbox("Salva GPS (se l'evento aveva OMISSIS, ora lo aggiunge)", value=has_gps, key=f"edit_setgps_{i}")
+
+                    s1, s2 = st.columns(2)
+                    ok_save = s1.form_submit_button("✅ SALVA MODIFICHE")
+                    cancel = s2.form_submit_button("❌ ANNULLA")
+                if cancel:
+                    st.session_state.edit_event_idx = None
+                    st.rerun()
+                if ok_save:
+                    b["sq"] = (new_sq or "").strip().upper()
+                    b["st"] = (new_st or "").strip()
+                    b["mit"] = (new_mit or "").strip()
+                    b["ris"] = (new_ris or "").strip()
+                    b["op"] = (new_op or "").strip()
+                    if set_gps:
+                        try:
+                            b["pos"] = [float(new_lat), float(new_lon)]
+                        except Exception:
+                            pass
+                    else:
+                        b["pos"] = None
+                    save_data_to_disk()
+                    st.success("Evento aggiornato.")
+                    st.session_state.edit_event_idx = None
+                    st.rerun()
+            else:
+                cE2.caption("Correggi un evento se c'è un errore di compilazione.")
 
             col_a, col_b = st.columns([1, 2])
             if gps_ok:

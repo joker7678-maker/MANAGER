@@ -1729,26 +1729,37 @@ with st.sidebar:
                             label_visibility="collapsed",
                         )
 
-                        st.download_button(
-                            "⬇️📱",
-                            data=png,
-                            file_name=f"QR_{team.replace(' ', '_')}.png",
-                            mime="image/png",
-                            key=f"dlqr_{team}",
-                        )
+           st.download_button(
+    "⬇️📱",
+    data=png,
+    file_name=f"QR_{team.replace(' ', '_')}.png",
+    mime="image/png",
+    key=f"dlqr_{team}",
+)
+
 st.divider()
-                    st.warning("Conferma eliminazione: questa azione è irreversibile.")
-                    conf = st.checkbox("Confermo eliminazione squadra", key=f"confdel_{team}")
-                    cD, cE = st.columns(2)
-                    if cD.button("✅ Conferma elimina", disabled=not conf, key=f"confirm_del_{team}"):
-                        ok, msg = delete_team(team)
-                        (st.success if ok else st.warning)(msg)
-                        st.session_state["_del_arm"] = None
-                        st.session_state.team_open = None
-                        st.rerun()
-                    if cE.button("❌ Annulla", key=f"cancel_del_{team}"):
-                        st.session_state["_del_arm"] = None
-                        st.rerun()
+
+if st.session_state.get("_del_arm") == team:
+    st.warning("Conferma eliminazione: questa azione è irreversibile.")
+    conf = st.checkbox("Confermo eliminazione squadra", key=f"confdel_{team}")
+
+    cD, cE = st.columns(2)
+
+    if cD.button(
+        "✅ Conferma elimina",
+        disabled=not conf,
+        key=f"confirm_del_{team}",
+    ):
+        ok, msg = delete_team(team)
+        (st.success if ok else st.warning)(msg)
+        st.session_state["_del_arm"] = None
+        st.session_state.team_open = None
+        st.rerun()
+
+    if cE.button("❌ Annulla", key=f"cancel_del_{team}"):
+        st.session_state["_del_arm"] = None
+        st.rerun()
+
 
         st.divider()
         st.markdown("## ➕ CREA SQUADRA")

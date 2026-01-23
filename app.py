@@ -1607,7 +1607,9 @@ with st.sidebar:
                     st.divider()
                     st.markdown("### 📱 QR accesso caposquadra")
 
-                    base_url = (st.session_state.get("BASE_URL") or "").strip().rstrip("/")
+                    base_url = (st.session_state.get("BASE_URL") or "").strip()
+                    # rimuove eventuali query e slash finali
+                    base_url = base_url.split("?")[0].rstrip("/")
                     token = st.session_state.squadre[team].get("token", "")
 
                     if not base_url.startswith("http"):
@@ -1623,7 +1625,7 @@ with st.sidebar:
                         )
 
                         # Link rapido WhatsApp (utile da PC o da telefono)
-                        wa_text = urllib.parse.quote(f"Link modulo caposquadra ({team}): {link}")
+                        wa_text = urllib.parse.quote(link)
                         st.markdown(
                             f"<a href='https://wa.me/?text={wa_text}' target='_blank' "
                             f"style='text-decoration:none;'>"

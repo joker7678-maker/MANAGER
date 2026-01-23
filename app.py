@@ -1708,11 +1708,15 @@ with st.sidebar:
                     st.divider()
                     st.markdown("### 📱 QR accesso caposquadra")
 
-                    share_url = (st.session_state.get("SHARE_URL") or st.session_state.get("BASE_URL") or "").strip().rstrip("/")
+                    share_url = (st.session_state.get("SHARE_URL") or "").strip().rstrip("/")
                     token = st.session_state.squadre[team].get("token", "")
 
                     if not share_url.startswith("http"):
-                        st.warning("⚠️ Imposta l'URL base: https://…streamlit.app")
+                        detected = (st.session_state.get("BASE_URL") or "").strip()
+                        st.warning("⚠️ Per evitare l'area protetta, qui serve l'**URL pubblico** (quello che funziona col QR).")
+                        if detected:
+                            st.caption(f"URL rilevato (spesso protetto): {detected}")
+                        st.info("Vai in sidebar → **URL pubblico per condivisione (WhatsApp/QR)** e incolla l'URL pubblico diretto dell'app (es. https://…streamlit.app).")
                     else:
                         link = f"{share_url}/?mode=campo&team={team}&token={token}"
 
@@ -1722,6 +1726,14 @@ with st.sidebar:
                             value=link,
                             key=f"sharelink_{team}",
                         )
+
+                        cTA, cTB = st.columns(2)
+                        with cTA:
+                            st.link_button("🔗 Test apri link", link, use_container_width=True)
+                        with cTB:
+                            st.caption("Se qui si apre 'Accesso protetto', allora l'URL pubblico in sidebar non è quello giusto.")
+
+                        # Link rapido WhatsApp                        )
 
                         # Link rapido WhatsApp (utile da PC o da telefono)
                         wa_text = urllib.parse.quote(f"Link modulo caposquadra ({team}): {link}")

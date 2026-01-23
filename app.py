@@ -1248,6 +1248,76 @@ section[data-testid="stSidebar"] div[data-testid="stExpander"] button[kind="seco
   line-height: 1 !important;
 }
 
+
+/* ====== MOBILE: Modulo da campo leggibile anche in dark mode ====== */
+@media (max-width: 768px){
+
+  :root { color-scheme: light; }
+
+  /* sfondo generale chiaro */
+  .stApp{
+    background: #f5f7fa !important;
+    color: #0b1220 !important;
+  }
+
+  /* card e contenitori */
+  .pc-card{
+    background: #ffffff !important;
+    border: 1px solid rgba(15,23,42,.14) !important;
+  }
+
+  /* input / textarea: sempre chiari */
+  input, textarea{
+    background-color: #ffffff !important;
+    color: #0b1220 !important;
+    border: 1px solid rgba(15,23,42,.20) !important;
+    border-radius: 12px !important;
+    padding: 0.70rem 0.85rem !important;
+    font-size: 1.02rem !important;
+    font-weight: 800 !important;
+  }
+  textarea{ min-height: 120px !important; }
+
+  input::placeholder, textarea::placeholder{
+    color: rgba(71,85,105,.85) !important;
+  }
+
+  /* label più leggibili */
+  label, .stMarkdown, .stCaption, p, span{
+    -webkit-text-size-adjust: 100%;
+  }
+
+  /* Bottoni: touch-friendly */
+  .stButton>button, button{
+    border-radius: 14px !important;
+    padding: 0.75rem 1.0rem !important;
+    font-size: 1.05rem !important;
+    font-weight: 900 !important;
+    min-height: 46px !important;
+  }
+
+  /* Primari ben visibili */
+  button[kind="primary"], .stButton>button[kind="primary"]{
+    background: linear-gradient(135deg, #1976d2 0%, #0d47a1 100%) !important;
+    color: #ffffff !important;
+    border: 1px solid rgba(255,255,255,.20) !important;
+    box-shadow: 0 10px 22px rgba(13,71,161,.22) !important;
+  }
+
+  /* Secondari chiari */
+  button[kind="secondary"], .stButton>button[kind="secondary"]{
+    background: #e3f2fd !important;
+    color: #0d47a1 !important;
+    border: 1px solid rgba(13,71,161,.18) !important;
+  }
+
+  /* Download button in campo: più largo e leggibile */
+  div[data-testid="stDownloadButton"] > button{
+    width: 100% !important;
+  }
+
+}
+
 </style>
 """, unsafe_allow_html=True)
 

@@ -2056,79 +2056,81 @@ st_folium(
 )
 
         # =========================
-        # NATO – Convertitore (solo sala radio)
-        # =========================
+# NATO – Convertitore (solo sala radio)
+# =========================
 st.markdown(
-	"<div class='nato-title'>📻 Alfabeto NATO – convertitore</div>",
-	 unsafe_allow_html=True)
+    "<div class='nato-title'>📻 Alfabeto NATO – convertitore</div>",
+    unsafe_allow_html=True,
+)
 
-        mode = st.radio(
-            "Modalità:",
-            ["Testo → NATO", "NATO → Frase"],
-            horizontal=True,
-            key="nato_mode",
-        )
+mode = st.radio(
+    "Modalità:",
+    ["Testo → NATO", "NATO → Frase"],
+    horizontal=True,
+    key="nato_mode",
+)
 
-        NATO_REV = {v.upper().replace("-", "").replace(" ", ""): k for k, v in NATO.items()}
+NATO_REV = {v.upper().replace("-", "").replace(" ", ""): k for k, v in NATO.items()}
 
-        def _clean_token(s: str) -> str:
-            return (
-                (s or "")
-                .strip()
-                .upper()
-                .replace(".", "")
-                .replace(",", "")
-                .replace(";", "")
-                .replace(":", "")
-                .replace("|", " ")
-                .replace("/", " ")
+def _clean_token(s: str) -> str:
+    return (
+        (s or "")
+        .strip()
+        .upper()
+        .replace(".", "")
+        .replace(",", "")
+        .replace(";", "")
+        .replace(":", "")
+        .replace("|", " ")
+        .replace("/", " ")
+    )
+
+def render_nato_grid_from_text(txt: str) -> str:
+    out = []
+    for ch in (txt or ""):
+        if ch == " ":
+            out.append("<span style='opacity:.35;margin:0 6px;'>•</span>")
+            continue
+        c = ch.upper()
+        if c in NATO:
+            out.append(
+                f"<div class='nato-chip nato-spell'>"
+                f"<div class='nato-letter'>{c}</div>"
+                f"<div class='nato-word'>{NATO[c]}</div>"
+                f"</div>"
             )
-
-        def render_nato_grid_from_text(txt: str) -> str:
-            out = []
-            for ch in (txt or ""):
-                if ch == " ":
-                    out.append("<span style='opacity:.35;margin:0 6px;'>•</span>")
-                    continue
-                c = ch.upper()
-                if c in NATO:
-                    out.append(
-                        f"<div class='nato-chip nato-spell'>"
-                        f"<div class='nato-letter'>{c}</div>"
-                        f"<div class='nato-word'>{NATO[c]}</div>"
-                        f"</div>"
-                    )
-                elif c.isdigit():
-                    out.append(
-                        f"<div class='nato-chip nato-spell'>"
-                        f"<div class='nato-letter'>{c}</div>"
-                        f"<div class='nato-word'>Numero</div>"
-                        f"</div>"
-                    )
-            return "<div class='nato-mini'>" + "".join(out) + "</div>"
-
-        def nato_phrase_to_text(nato_phrase: str) -> str:
-            s = _clean_token(nato_phrase)
-            tokens = [t for t in s.split() if t]
-            out_chars = []
-            for t in tokens:
-                key = t.replace("-", "").replace(" ", "")
-                if key.isdigit():
-                    out_chars.append(key)
-                    continue
-                letter = NATO_REV.get(key)
-                if letter:
-                    out_chars.append(letter)
-                else:
-                    out_chars.append(key[:1])
-            return "".join(out_chars)
-
-        if mode == "Testo → NATO":
-            testo_nato = st.text_input(
-                "Scrivi testo / nominativo / codice",
-                placeholder="Es. DAVIDE 21 / SQUADRA ALFA",
-                key="nato_input_text",
+        elif c.isdigit():
+            out.append(
+                f"<div class='nato-chip nato-spell'>"
+                f"<div class='nato-letter'>{c}</div>"
+                f"<div class='nato-word'>Numero</div>"
+                f"</div>"
             )
+    return "<div class='nato-mini'>" + "".join(out) + "</div>"
+
+def nato_phrase_to_text(nato_phrase: str) -> str:
+    s = _clean_token(nato_phrase)
+    tokens = [t for t in s.split() if t]
+    out_chars = []
+    for t in tokens:
+        key = t.replace("-", "").replace(" ", "")
+        if key.isdigit():
+            out_chars.append(key)
+            continue
+        letter = NATO_REV.get(key)
+        if letter:
+            out_chars.append(letter)
+        else:
+            out_chars.append(key[:1])
+    return "".join(out_chars)
+
+if mode == "Testo → NATO":
+    testo_nato = st.text_input(
+        "Scrivi testo / nominativo / codice",
+        placeholder="Es. DAVIDE 21 / SQUADRA ALFA",
+        key="nato_input_text",
+    )
+
 
             if testo_nato.strip():
                 st.markdown(render_nato_grid_from_text(testo_nato), unsafe_allow_html=True)

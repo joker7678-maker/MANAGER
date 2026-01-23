@@ -11,6 +11,7 @@ import urllib.parse
 import qrcode
 from io import BytesIO
 from typing import Optional, Tuple, Dict, Any, List
+import hashlib
 
 # =========================
 # CONFIG
@@ -157,8 +158,17 @@ def chip_call_flow(row: dict) -> str:
     a, b = call_flow_from_row(row)
     return f"<div class='pc-flow'>📞 <b>{a}</b> <span class='pc-arrow'>➜</span> 🎧 <b>{b}</b></div>"
 
+def _folium_tiles_name() -> str:
+    """Tile provider più veloce del default OSM in molte reti.
+
+    - "CartoDB positron" è spesso più rapido e leggero.
+    - Se preferisci il classico, cambia in "OpenStreetMap".
+    """
+    return "CartoDB positron"
+
+
 def build_folium_map_from_df(df: pd.DataFrame, center: list, zoom: int = 13, inbox: Optional[List[dict]] = None) -> folium.Map:
-    m = folium.Map(location=center, zoom_start=zoom)
+    m = folium.Map(location=center, zoom_start=zoom, tiles=_folium_tiles_name(), prefer_canvas=True)
     ultime_pos = {}
     if not df.empty:
         for _, row in df.iterrows():
@@ -203,7 +213,7 @@ def build_folium_map_from_events(events: List[dict], center: list, zoom: int = 1
     - prende l'ULTIMO punto per squadra (events è newest->oldest, quindi basta il primo punto visto per squadra)
     - aggiunge anche posizioni 'pending' (inbox) senza sovrascrivere quelle già valide
     """
-    m = folium.Map(location=center, zoom_start=zoom)
+    m = folium.Map(location=center, zoom_start=zoom, tiles=_folium_tiles_name(), prefer_canvas=True)
 
     ultime_pos: Dict[str, Dict[str, Any]] = {}
     seen = set()
@@ -250,6 +260,32 @@ def build_folium_map_from_events(events: List[dict], center: list, zoom: int = 1
 
     return m
 
+
+def build_folium_map_from_latest_positions(
+    ultime_pos: Dict[str, Dict[str, Any]],
+    center: list,
+    zoom: int = 13,
+) -> folium.Map:
+    """Costruisce una mappa Folium partendo già da posizioni 'deduplicate'."""
+    m = folium.Map(location=center, zoom_start=zoom, tiles=_folium_tiles_name(), prefer_canvas=True)
+    for sq, info in (ultime_pos or {}).items():
+        pos = info.get("pos")
+        if not (isinstance(pos, list) and len(pos) == 2):
+            continue
+        stt = (info.get("st") or "").strip()
+        hx = team_hex(sq)
+        folium.CircleMarker(
+            location=pos,
+            radius=8,
+            color=hx,
+            weight=3,
+            fill=True,
+            fill_color=hx,
+            fill_opacity=1.0,
+            tooltip=f"{sq}: {stt}" if stt else sq,
+        ).add_to(m)
+    return m
+
 def df_for_report(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
@@ -286,6 +322,78 @@ def df_for_report(df: pd.DataFrame) -> pd.DataFrame:
         }
     )
     return out
+
+
+# =========================
+# PERFORMANCE – CACHE
+# =========================
+def _hash_obj(o: Any) -> str:
+    """Hash stabile e veloce (per cache) su piccoli oggetti JSON-compatibili."""
+    try:
+        s = json.dumps(o, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    except Exception:
+        s = str(o)
+    return hashlib.md5(s.encode("utf-8")).hexdigest()
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def _latest_positions_cached(events_slice: List[dict], inbox: List[dict], squad_names: List[str]) -> Dict[str, Dict[str, Any]]:
+    """Estrae solo l'ULTIMA posizione per squadra (velocissimo) + inbox pending.
+
+    La cache evita di rifare il lavoro a ogni rerun (che Streamlit fa spesso).
+    """
+    ultime_pos: Dict[str, Dict[str, Any]] = {}
+    seen = set()
+
+    if isinstance(events_slice, list) and events_slice:
+        for row in events_slice:  # newest -> oldest
+            sq = (row.get("sq") or "").strip()
+            if not sq or sq in seen:
+                continue
+            pos = row.get("pos")
+            if isinstance(pos, list) and len(pos) == 2:
+                stt = (row.get("st") or "").strip()
+                ultime_pos[sq] = {"pos": pos, "st": stt}
+                seen.add(sq)
+                if squad_names and len(seen) >= len(squad_names):
+                    break
+
+    # pending inbox (non sovrascrive)
+    if inbox:
+        for mmsg in inbox:
+            try:
+                sqp = (mmsg.get("sq") or "").strip()
+                posp = mmsg.get("pos")
+                if isinstance(posp, list) and len(posp) == 2 and sqp:
+                    ultime_pos.setdefault(sqp, {"pos": posp, "st": "📥 In attesa validazione"})
+            except Exception:
+                continue
+
+    return ultime_pos
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def _build_folium_from_latest_cached(latest: Dict[str, Dict[str, Any]], center: List[float], zoom: int) -> folium.Map:
+    """Costruisce la mappa Folium partendo SOLO dalle ultime posizioni (pochi marker).
+
+    La parte lenta è spesso il download delle tiles nel browser; qui riduciamo anche
+    i marker e i JS ridondanti.
+    """
+    m = folium.Map(location=center, zoom_start=zoom, tiles=_folium_tiles_name(), prefer_canvas=True)
+    for sq, info in (latest or {}).items():
+        stt = (info.get("st") or "").strip()
+        hx = team_hex(sq)
+        folium.CircleMarker(
+            location=info.get("pos"),
+            radius=8,
+            color=hx,
+            weight=3,
+            fill=True,
+            fill_color=hx,
+            fill_opacity=1.0,
+            tooltip=f"{sq}: {stt}" if stt else sq,
+        ).add_to(m)
+    return m
 
 def qr_png_bytes(url: str) -> bytes:
     qr = qrcode.QRCode(box_size=8, border=2)
@@ -386,10 +494,9 @@ def render_static_map_png(
             smap.add_line(Line(polyline, "#111827", 3))  # colore scuro, spessore 3
 
         # marker
-        for (lat, lon, label) in points:
-            # marker blu
+        for (lat, lon, _label) in points:
+            # marker blu (staticmap non stampa label sul tile; ma almeno i punti ci sono)
             smap.add_marker(CircleMarker((lon, lat), "#2563eb", 10))
-            # (staticmap non stampa label sul tile; ma almeno i punti ci sono)
 
         image = smap.render(zoom=zoom)
         buf = BytesIO()
@@ -397,6 +504,17 @@ def render_static_map_png(
         return buf.getvalue()
     except Exception:
         return None
+
+
+@st.cache_data(show_spinner=False, ttl=30)
+def _static_map_png_cached(cache_key: str, points: List[Tuple[float, float, str]], zoom: int) -> Optional[bytes]:
+    """PNG statico con cache breve.
+
+    - serve per una "mappa rapida" (immagine) che si apre istantaneamente e non dipende dal caricamento tiles.
+    - cache_key invalida quando cambiano i punti.
+    """
+    _ = cache_key
+    return render_static_map_png(points=points, polyline=None, size=(1200, 650), zoom=zoom)
 
 def make_html_report_bytes(
     squads: Dict[str, Any],
@@ -2005,14 +2123,46 @@ with t_rad:
             st.divider()
 
         st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
-        # (Performance) mappa senza pandas: usa direttamente brogliaccio
-        m = build_folium_map_from_events(
-            st.session_state.brogliaccio,
-            center=st.session_state.pos_mappa,
-            zoom=14,
-            inbox=st.session_state.get('inbox')
-        )
-        st_folium(m, width="100%", height=450, returned_objects=[])
+        # =========================
+        # MAPPA (ottimizzata)
+        # =========================
+        show_map = st.toggle("🗺️ Mostra mappa", value=True, key="show_main_map")
+        fast_img = st.toggle("⚡ Mappa rapida (immagine)", value=False, key="fast_map_img")
+        st.caption("Suggerimento: se la mappa interattiva impiega molto (tiles), usa 'Mappa rapida (immagine)'.")
+
+        if show_map:
+            # per la dedup basta una slice dei primi eventi (newest->oldest)
+            events_slice = st.session_state.brogliaccio[:2000]
+            inbox_now = st.session_state.get('inbox') or []
+            squad_names = sorted(list(st.session_state.squadre.keys()))
+
+            ultime_pos = _latest_positions_cached(events_slice, inbox_now, squad_names)
+
+            if fast_img:
+                pts = []
+                for sq, info in (ultime_pos or {}).items():
+                    pos = info.get("pos")
+                    if isinstance(pos, list) and len(pos) == 2:
+                        try:
+                            pts.append((float(pos[0]), float(pos[1]), f"{sq} · {info.get('st','')}"))
+                        except Exception:
+                            pass
+                ck = _hash_obj({"p": pts, "z": 14})
+                png = _static_map_png_cached(ck, pts, zoom=14)
+                if png:
+                    st.image(png, use_container_width=True)
+                else:
+                    st.info("Per la mappa rapida serve 'staticmap' in requirements.txt. In alternativa usa la mappa interattiva.")
+            else:
+                # interattiva (Folium)
+                m = build_folium_map_from_latest_positions(
+                    ultime_pos,
+                    center=st.session_state.pos_mappa,
+                    zoom=14,
+                )
+                st_folium(m, width="100%", height=450, returned_objects=[])
+        else:
+            st.info("Mappa nascosta (velocizza i rerun).")
         # =========================
         # NATO – Convertitore (solo sala radio)
         # =========================
@@ -2224,13 +2374,26 @@ if st.session_state.open_map_event is not None:
         st.subheader("🗺️ Mappa evento selezionato")
 
         if isinstance(pos, list) and len(pos) == 2:
-            m_ev = folium.Map(location=pos, zoom_start=16)
-            folium.Marker(
-                pos,
-                tooltip=f"{row.get('sq','')} · {row.get('st','')}",
-                icon=folium.Icon(color=COLORI_STATI.get(row.get('st',''), {}).get('color', 'blue')),
-            ).add_to(m_ev)
-            st_folium(m_ev, width="100%", height=420, returned_objects=[])
+            fast_ev = st.toggle("⚡ Mappa rapida evento (immagine)", value=False, key="fast_event_map_img")
+            if fast_ev:
+                try:
+                    pts = [(float(pos[0]), float(pos[1]), f"{row.get('sq','')} · {row.get('st','')}")]
+                except Exception:
+                    pts = []
+                ck = _hash_obj({"ev": idx, "p": pts})
+                png = _static_map_png_cached(ck, pts, zoom=15)
+                if png:
+                    st.image(png, use_container_width=True)
+                else:
+                    st.info("Per la mappa rapida serve 'staticmap' in requirements.txt. Disattiva il toggle per la mappa interattiva.")
+            else:
+                m_ev = folium.Map(location=pos, zoom_start=15, tiles=_folium_tiles_name(), prefer_canvas=True)
+                folium.Marker(
+                    pos,
+                    tooltip=f"{row.get('sq','')} · {row.get('st','')}",
+                    icon=folium.Icon(color=COLORI_STATI.get(row.get('st',''), {}).get('color', 'blue')),
+                ).add_to(m_ev)
+                st_folium(m_ev, width="100%", height=420, returned_objects=[])
         else:
             st.info("Evento senza coordinate GPS (OMISSIS).")
 

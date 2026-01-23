@@ -156,7 +156,7 @@ def chip_call_flow(row: dict) -> str:
     a, b = call_flow_from_row(row)
     return f"<div class='pc-flow'>📞 <b>{a}</b> <span class='pc-arrow'>➜</span> 🎧 <b>{b}</b></div>"
 
-def build_folium_map_from_df(df: pd.DataFrame, center: list, zoom: int = 13) -> folium.Map:
+def build_folium_map_from_df(df: pd.DataFrame, center: list, zoom: int = 13, inbox: Optional[List[dict]] = None) -> folium.Map:
     m = folium.Map(location=center, zoom_start=zoom)
     ultime_pos = {}
     if not df.empty:
@@ -166,6 +166,19 @@ def build_folium_map_from_df(df: pd.DataFrame, center: list, zoom: int = 13) -> 
             stt = (row.get("st") or "").strip()
             if isinstance(pos, list) and len(pos) == 2 and sq:
                 ultime_pos[sq] = {"pos": pos, "st": stt}
+
+
+    # Aggiunge anche le POSIZIONI PENDING (inbox) per visualizzarle subito in mappa
+    if inbox:
+        for mmsg in inbox:
+            try:
+                sqp = (mmsg.get("sq") or "").strip()
+                posp = mmsg.get("pos")
+                if isinstance(posp, list) and len(posp) == 2 and sqp:
+                    # le pending NON sovrascrivono una posizione già valida da brogliaccio
+                    ultime_pos.setdefault(sqp, {"pos": posp, "st": "📥 In attesa validazione"})
+            except Exception:
+                continue
 
     for sq, info in ultime_pos.items():
         stt = info["st"] or ""
@@ -804,6 +817,7 @@ def load_data_from_disk():
     st.session_state.ev_desc = payload.get("ev_desc", "")
     st.session_state.BASE_URL = payload.get("BASE_URL", "") or ""
     st.session_state.cnt_conclusi = int(payload.get("cnt_conclusi", 0) or 0)
+    ensure_inbox_ids()
     return True
 
 def load_data_from_uploaded_json(file_bytes: bytes):
@@ -820,7 +834,23 @@ def load_data_from_uploaded_json(file_bytes: bytes):
     st.session_state.BASE_URL = payload.get("BASE_URL", "") or ""
     st.session_state.cnt_conclusi = int(payload.get("cnt_conclusi", 0) or 0)
     save_data_to_disk()
+    ensure_inbox_ids()
 
+
+
+def ensure_inbox_ids() -> None:
+    """Assicura che ogni messaggio in inbox abbia un id stabile (evita bug widget/rerun)."""
+    inbox = st.session_state.get("inbox", [])
+    changed = False
+    if isinstance(inbox, list):
+        for m in inbox:
+            if isinstance(m, dict):
+                if not m.get("id"):
+                    m["id"] = uuid.uuid4().hex
+                    changed = True
+    if changed:
+        # non forziamo save qui sempre: lo farà chi chiama, ma teniamo consistenza
+        pass
 # =========================
 # INIT STATE
 # =========================
@@ -831,6 +861,7 @@ if "initialized" not in st.session_state:
     st.session_state.team_qr_open = None
 
     ok = load_data_from_disk()
+    ensure_inbox_ids()
     # inizializza contatore conclusi se mancante (deriva dal brogliaccio)
     if "cnt_conclusi" not in st.session_state or st.session_state.cnt_conclusi is None:
         st.session_state.cnt_conclusi = sum(1 for r in st.session_state.get("brogliaccio", []) if r.get("st") == "Intervento concluso")
@@ -838,6 +869,7 @@ if "initialized" not in st.session_state:
         d = default_state_payload()
         st.session_state.brogliaccio = d["brogliaccio"]
         st.session_state.inbox = d["inbox"]
+        ensure_inbox_ids()
         st.session_state.squadre = d["squadre"]
         st.session_state.pos_mappa = d["pos_mappa"]
         st.session_state.op_name = d["op_name"]
@@ -1662,7 +1694,7 @@ if badge_ruolo == "MODULO CAPOSQUADRA":
     if st.button("🚀 INVIA RAPIDO", use_container_width=True):
         pos_da_inviare = st.session_state.get('field_gps') if share_gps else None
         st.session_state.inbox.append(
-            {"ora": datetime.now().strftime("%H:%M"), "sq": sq_c, "msg": msg_rapido or "Aggiornamento posizione", "foto": None, "pos": pos_da_inviare}
+            {"id": uuid.uuid4().hex, "ora": datetime.now().strftime("%H:%M"), "sq": sq_c, "msg": msg_rapido or "Aggiornamento posizione", "foto": None, "pos": pos_da_inviare}
         )
         save_data_to_disk()
         st.success("✅ Inviato!")
@@ -1675,7 +1707,7 @@ if badge_ruolo == "MODULO CAPOSQUADRA":
         if st.form_submit_button("🚀 INVIA RAPPORTO COMPLETO", type="primary", use_container_width=True):
             pos_da_inviare = st.session_state.get('field_gps') if share_gps else None
             st.session_state.inbox.append(
-                {"ora": datetime.now().strftime("%H:%M"), "sq": sq_c, "msg": msg_c, "foto": foto.read() if foto else None, "pos": pos_da_inviare}
+                {"id": uuid.uuid4().hex, "ora": datetime.now().strftime("%H:%M"), "sq": sq_c, "msg": msg_c, "foto": foto.read() if foto else None, "pos": pos_da_inviare}
             )
             save_data_to_disk()
             st.success("✅ Inviato!")
@@ -1719,7 +1751,9 @@ c5.markdown(metric_box(COLORI_STATI["In attesa al COC"]["hex"], "🏠", "Al COC"
 def render_inbox_approval():
     if not st.session_state.get('inbox'):
         return
-    for i, data in enumerate(st.session_state.inbox):
+    for data in list(st.session_state.inbox):
+        msg_id = data.get("id") or uuid.uuid4().hex
+        data["id"] = msg_id
         sq_in = data["sq"]
         inf_in = get_squadra_info(sq_in)
 
@@ -1733,11 +1767,11 @@ def render_inbox_approval():
             if data["foto"]:
                 st.image(data["foto"], width=220)
 
-            st_v = st.selectbox("Nuovo Stato:", list(COLORI_STATI.keys()), key=f"sv_inbox_{i}")
+            st_v = st.selectbox("Nuovo Stato:", list(COLORI_STATI.keys()), key=f"sv_inbox_{msg_id}")
             st.markdown(chip_stato(st_v), unsafe_allow_html=True)
 
             cb1, cb2 = st.columns(2)
-            if cb1.button("✅ APPROVA", key=f"ap_{i}"):
+            if cb1.button("✅ APPROVA", key=f"ap_{msg_id}"):
                 pref = "[AUTO]" if data["pos"] else "[AUTO-PRIVACY]"
                 st.session_state.brogliaccio.insert(
                     0,
@@ -1749,12 +1783,12 @@ def render_inbox_approval():
                 st.session_state.squadre[sq_in]["stato"] = st_v
                 if st_v == "Intervento concluso" and prev_st != "Intervento concluso":
                     st.session_state.cnt_conclusi = int(st.session_state.get("cnt_conclusi", 0) or 0) + 1
-                st.session_state.inbox.pop(i)
+                st.session_state.inbox = [m for m in st.session_state.inbox if (m.get("id") != msg_id)]
                 save_data_to_disk()
                 st.rerun()
 
-            if cb2.button("🗑️ SCARTA", key=f"sc_{i}"):
-                st.session_state.inbox.pop(i)
+            if cb2.button("🗑️ SCARTA", key=f"sc_{msg_id}"):
+                st.session_state.inbox = [m for m in st.session_state.inbox if (m.get("id") != msg_id)]
                 save_data_to_disk()
                 st.rerun()
 
@@ -1829,12 +1863,16 @@ with t_rad:
                 if st.button('🔄', key='refresh_console', help='Aggiorna dati dalla memoria condivisa'):
                     load_data_from_disk()
                     st.rerun()
-            render_inbox_approval()
+            try:
+                render_inbox_approval()
+            except Exception as _e:
+                st.error("Errore visualizzazione inbox (non blocca la mappa). Premi 🔄")
+
             st.divider()
 
         st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
         df_all = pd.DataFrame(st.session_state.brogliaccio)
-        m = build_folium_map_from_df(df_all, center=st.session_state.pos_mappa, zoom=14)
+        m = build_folium_map_from_df(df_all, center=st.session_state.pos_mappa, zoom=14, inbox=st.session_state.get('inbox'))
         st_folium(m, width="100%", height=450)
         # =========================
         # NATO – Convertitore (solo sala radio)
@@ -2092,6 +2130,7 @@ if col_m1.button("🧹 CANCELLA TUTTI I DATI"):
     d = default_state_payload()
     st.session_state.brogliaccio = d["brogliaccio"]
     st.session_state.inbox = d["inbox"]
+    ensure_inbox_ids()
     st.session_state.squadre = d["squadre"]
     st.session_state.pos_mappa = d["pos_mappa"]
     st.session_state.op_name = d["op_name"]

@@ -1729,7 +1729,7 @@ with st.sidebar:
                             label_visibility="collapsed",
                         )
 
-           st.download_button(
+st.download_button(
     "⬇️📱",
     data=png,
     file_name=f"QR_{team.replace(' ', '_')}.png",

@@ -153,6 +153,37 @@ def call_flow_from_row(row: dict) -> Tuple[str, str]:
         return "SALA OPERATIVA", (sq if sq else "—")
     return (sq if sq else "SQUADRA"), "SALA OPERATIVA"
 
+
+@st.cache_data(show_spinner=False)
+def _light_log_from_json(events_json: str) -> List[Dict[str, Any]]:
+    """Build a lightweight view of the log (fast table) from brogliaccio JSON.
+    Keeps only tiny fields to avoid re-render slowness when brogliaccio grows.
+    """
+    try:
+        events = json.loads(events_json)
+    except Exception:
+        return []
+    out: List[Dict[str, Any]] = []
+    for i, e in enumerate(events):
+        if not isinstance(e, dict):
+            continue
+        pos = e.get("pos")
+        out.append({
+            "idx": i,
+            "ora": e.get("ora", ""),
+            "sq": e.get("sq", ""),
+            "st": e.get("st", ""),
+            "chi": (e.get("chi") or ""),
+            "gps": isinstance(pos, list) and len(pos) == 2,
+            "msg": ((e.get("mit") or "")[:60]),
+        })
+    return out
+
+def _get_light_log(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    # stable JSON for cache key
+    events_json = json.dumps(events, ensure_ascii=False, separators=(",", ":"))
+    return _light_log_from_json(events_json)
+
 def chip_call_flow(row: dict) -> str:
     a, b = call_flow_from_row(row)
     return f"<div class='pc-flow'>📞 <b>{a}</b> <span class='pc-arrow'>➜</span> 🎧 <b>{b}</b></div>"
@@ -2208,8 +2239,10 @@ mode_fast = st.toggle("⚡ Modalità veloce (tabella + dettaglio)", value=True, 
 _lim_opts = [100, 250, 500, 1000, "Tutti"]
 _lim = st.selectbox("Carica eventi:", _lim_opts, index=1, key="log_limit")
 all_events = st.session_state.brogliaccio
-events_loaded = all_events if _lim == "Tutti" else all_events[:int(_lim)]
+# Lightweight cached log for fast table rendering (avoids iterating heavy dicts with photos etc.)
+light_events = _get_light_log(all_events)
 
+events_loaded = light_events if _lim == "Tutti" else light_events[:int(_lim)]
 if _lim != "Tutti" and len(all_events) > int(_lim):
     st.caption(f"Caricati i primi **{int(_lim)}** eventi su **{len(all_events)}** totali (per velocità).")
 
@@ -2271,9 +2304,10 @@ if mode_fast:
 
         # Tabella compatta (virtualizzata)
         rows = []
-        for j, b in enumerate(page_events, start=start_i):
-            gps_ok = isinstance(b.get("pos"), list) and len(b["pos"]) == 2
-            a, c = call_flow_from_row(b)
+        for _k, b in enumerate(page_events, start=start_i):
+            j = int(b.get("idx", _k))
+            gps_ok = bool(b.get("gps", False))
+            a, c = call_flow_from_row({"chi": b.get("chi", ""), "sq": b.get("sq", "")})
             rows.append({
                 "#": j,
                 "ORA": b.get("ora", ""),
@@ -2282,7 +2316,7 @@ if mode_fast:
                 "DA": a,
                 "A": c,
                 "GPS": "✅" if gps_ok else "—",
-                "MSG": (b.get("mit", "") or "")[:60],
+                "MSG": b.get("msg", ""),
             })
 
         df_log = pd.DataFrame(rows)

@@ -7,7 +7,6 @@ import os
 import base64
 import json
 import uuid
-import urllib.parse
 import qrcode
 from io import BytesIO
 from typing import Optional, Tuple, Dict, Any, List
@@ -37,46 +36,6 @@ COLORI_STATI = {
     "Rientro in corso": {"color": "orange", "hex": "#ffb74d"},
     "Rientrata al Coc": {"color": "green", "hex": "#81c784"},
 }
-
-# Colori fissi per SQUADRA (usati sia nei pallini in sidebar che nei marker in mappa)
-# (cicla se le squadre sono più della palette)
-COLORI_SQUADRE = [
-    "#e53935",  # rosso
-    "#1e88e5",  # blu
-    "#43a047",  # verde
-    "#fb8c00",  # arancio
-    "#8e24aa",  # viola
-    "#00897b",  # teal
-    "#6d4c41",  # marrone
-    "#546e7a",  # blu-grigio
-    "#c0ca33",  # lime
-    "#f4511e",  # arancio scuro
-]
-
-def _pick_next_team_color(used_hex: set) -> str:
-    for hx in COLORI_SQUADRE:
-        if hx not in used_hex:
-            return hx
-    return COLORI_SQUADRE[len(used_hex) % len(COLORI_SQUADRE)]
-
-def ensure_team_colors() -> None:
-    """Assicura che ogni squadra abbia un colore fisso ('mhex')."""
-    used = set()
-    for _name, info in st.session_state.squadre.items():
-        hx = (info.get("mhex") or "").strip()
-        if hx.startswith("#") and len(hx) == 7:
-            used.add(hx)
-    for name in sorted(st.session_state.squadre.keys()):
-        info = st.session_state.squadre[name]
-        hx = (info.get("mhex") or "").strip()
-        if not (hx.startswith("#") and len(hx) == 7):
-            info["mhex"] = _pick_next_team_color(used)
-            used.add(info["mhex"])
-
-def team_hex(team: str) -> str:
-    info = st.session_state.squadre.get(team, {}) if hasattr(st.session_state, "squadre") else {}
-    hx = (info.get("mhex") or "").strip()
-    return hx if (hx.startswith("#") and len(hx) == 7) else "#1e88e5"
 
 
 # =========================
@@ -157,45 +116,25 @@ def chip_call_flow(row: dict) -> str:
     a, b = call_flow_from_row(row)
     return f"<div class='pc-flow'>📞 <b>{a}</b> <span class='pc-arrow'>➜</span> 🎧 <b>{b}</b></div>"
 
-def build_folium_map_from_df(df: pd.DataFrame, center: list, zoom: int = 13, inbox: Optional[List[dict]] = None) -> folium.Map:
+def build_folium_map_from_df(df: pd.DataFrame, center: list, zoom: int = 13) -> folium.Map:
     m = folium.Map(location=center, zoom_start=zoom)
     ultime_pos = {}
     if not df.empty:
         for _, row in df.iterrows():
             pos = row.get("pos")
-            sq = (row.get("sq") or "").strip()
-            stt = (row.get("st") or "").strip()
-            if isinstance(pos, list) and len(pos) == 2 and sq:
+            sq = row.get("sq")
+            stt = row.get("st")
+            if isinstance(pos, list) and len(pos) == 2:
                 ultime_pos[sq] = {"pos": pos, "st": stt}
 
-
-    # Aggiunge anche le POSIZIONI PENDING (inbox) per visualizzarle subito in mappa
-    if inbox:
-        for mmsg in inbox:
-            try:
-                sqp = (mmsg.get("sq") or "").strip()
-                posp = mmsg.get("pos")
-                if isinstance(posp, list) and len(posp) == 2 and sqp:
-                    # le pending NON sovrascrivono una posizione già valida da brogliaccio
-                    ultime_pos.setdefault(sqp, {"pos": posp, "st": "📥 In attesa validazione"})
-            except Exception:
-                continue
-
     for sq, info in ultime_pos.items():
-        stt = info["st"] or ""
-        hx = team_hex(sq)
-        folium.CircleMarker(
-            location=info["pos"],
-            radius=8,
-            color=hx,
-            weight=3,
-            fill=True,
-            fill_color=hx,
-            fill_opacity=1.0,
-            tooltip=f"{sq}: {stt}" if stt else sq,
+        stt = info["st"]
+        folium.Marker(
+            info["pos"],
+            tooltip=f"{sq}: {stt}",
+            icon=folium.Icon(color=COLORI_STATI.get(stt, {}).get("color", "blue")),
         ).add_to(m)
     return m
-
 
 def df_for_report(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
@@ -778,10 +717,10 @@ def default_state_payload():
         "ev_nome": "",
         "ev_desc": "",
         "BASE_URL": "",
-        "cnt_conclusi": 0,
     }
 
-def save_data_to_disk():
+def save_data_to_disk(force: bool = False):
+    """Salva su disco solo se i dati sono cambiati (riduce blocchi con molti eventi)."""
     payload = {
         "brogliaccio": st.session_state.brogliaccio,
         "inbox": st.session_state.inbox,
@@ -793,8 +732,18 @@ def save_data_to_disk():
         "ev_nome": st.session_state.ev_nome,
         "ev_desc": st.session_state.ev_desc,
         "BASE_URL": st.session_state.get("BASE_URL", ""),
-        "cnt_conclusi": st.session_state.get("cnt_conclusi", 0),
     }
+    # firma leggera
+    try:
+        sig = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+    except Exception:
+        sig = str(payload)
+
+    last_sig = st.session_state.get("_last_saved_sig")
+    if (not force) and last_sig == sig:
+        return
+
+    st.session_state["_last_saved_sig"] = sig
     with open(DATA_PATH, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
 
@@ -817,8 +766,6 @@ def load_data_from_disk():
     st.session_state.ev_nome = payload.get("ev_nome", "")
     st.session_state.ev_desc = payload.get("ev_desc", "")
     st.session_state.BASE_URL = payload.get("BASE_URL", "") or ""
-    st.session_state.cnt_conclusi = int(payload.get("cnt_conclusi", 0) or 0)
-    ensure_inbox_ids()
     return True
 
 def load_data_from_uploaded_json(file_bytes: bytes):
@@ -833,25 +780,8 @@ def load_data_from_uploaded_json(file_bytes: bytes):
     st.session_state.ev_nome = payload.get("ev_nome", "")
     st.session_state.ev_desc = payload.get("ev_desc", "")
     st.session_state.BASE_URL = payload.get("BASE_URL", "") or ""
-    st.session_state.cnt_conclusi = int(payload.get("cnt_conclusi", 0) or 0)
     save_data_to_disk()
-    ensure_inbox_ids()
 
-
-
-def ensure_inbox_ids() -> None:
-    """Assicura che ogni messaggio in inbox abbia un id stabile (evita bug widget/rerun)."""
-    inbox = st.session_state.get("inbox", [])
-    changed = False
-    if isinstance(inbox, list):
-        for m in inbox:
-            if isinstance(m, dict):
-                if not m.get("id"):
-                    m["id"] = uuid.uuid4().hex
-                    changed = True
-    if changed:
-        # non forziamo save qui sempre: lo farà chi chiama, ma teniamo consistenza
-        pass
 # =========================
 # INIT STATE
 # =========================
@@ -862,15 +792,10 @@ if "initialized" not in st.session_state:
     st.session_state.team_qr_open = None
 
     ok = load_data_from_disk()
-    ensure_inbox_ids()
-    # inizializza contatore conclusi se mancante (deriva dal brogliaccio)
-    if "cnt_conclusi" not in st.session_state or st.session_state.cnt_conclusi is None:
-        st.session_state.cnt_conclusi = sum(1 for r in st.session_state.get("brogliaccio", []) if r.get("st") == "Intervento concluso")
     if not ok:
         d = default_state_payload()
         st.session_state.brogliaccio = d["brogliaccio"]
         st.session_state.inbox = d["inbox"]
-        ensure_inbox_ids()
         st.session_state.squadre = d["squadre"]
         st.session_state.pos_mappa = d["pos_mappa"]
         st.session_state.op_name = d["op_name"]
@@ -878,7 +803,6 @@ if "initialized" not in st.session_state:
         st.session_state.ev_tipo = d["ev_tipo"]
         st.session_state.ev_nome = d["ev_nome"]
         st.session_state.ev_desc = d["ev_desc"]
-        st.session_state.cnt_conclusi = 0
         st.session_state.BASE_URL = d["BASE_URL"]
         save_data_to_disk()
 
@@ -886,21 +810,6 @@ if "initialized" not in st.session_state:
 for _, info in st.session_state.squadre.items():
     if "token" not in info or not info["token"]:
         info["token"] = uuid.uuid4().hex
-
-
-# =========================
-# SYNC MULTI-SESSION (Caposquadra -> Console)
-# =========================
-# Se un caposquadra invia dal proprio link QR, scrive su DATA_PATH.
-# La console vede i nuovi dati al prossimo rerun: qui forziamo un reload quando il file cambia.
-if not st.session_state.get("field_ok"):
-    try:
-        _mtime = os.path.getmtime(DATA_PATH) if os.path.exists(DATA_PATH) else None
-        if _mtime and st.session_state.get("_data_mtime") != _mtime:
-            load_data_from_disk()
-            st.session_state._data_mtime = _mtime
-    except Exception:
-        pass
 
 # =========================
 # AUTO BASE URL (opzionale: streamlit-js-eval)
@@ -915,47 +824,7 @@ try:
 except Exception:
     pass
 
-
-
-# =========================
-# GEOLOCATION (CAPOSQUADRA)
-# =========================
-def _extract_latlon(geo: Any) -> Optional[List[float]]:
-    """Accetta vari formati (streamlit-js-eval) e ritorna [lat, lon] oppure None."""
-    if not isinstance(geo, dict):
-        return None
-
-    # Formato A: {"latitude": .., "longitude": ..}
-    lat = geo.get("latitude")
-    lon = geo.get("longitude")
-    if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
-        return [float(lat), float(lon)]
-
-    # Formato B: {"coords": {"latitude":.., "longitude":..}}
-    coords = geo.get("coords")
-    if isinstance(coords, dict):
-        lat = coords.get("latitude")
-        lon = coords.get("longitude")
-        if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
-            return [float(lat), float(lon)]
-
-    # Formato C: {"lat":.., "lng":..} / {"lon":..}
-    lat = geo.get("lat")
-    lon = geo.get("lng") if "lng" in geo else geo.get("lon")
-    if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
-        return [float(lat), float(lon)]
-
-    return None
-
-def get_phone_gps_once() -> Optional[List[float]]:
-    """Prova a leggere il GPS dal browser (telefono). Richiede streamlit-js-eval."""
-    try:
-        from streamlit_js_eval import get_geolocation  # type: ignore
-        geo = get_geolocation()
-        return _extract_latlon(geo)
-    except Exception:
-        return None
-save_data_to_disk()
+# (salvataggio su disco solo quando cambiano i dati)
 
 # =========================
 # TEAM OPS
@@ -1136,35 +1005,6 @@ section[data-testid="stSidebar"] textarea{
   border-radius: 12px !important;
   font-weight: 800 !important;
 }
-
-/* File uploader (sidebar): nasconde la scheda "Drag and drop..." e rende il box compatto */
-section[data-testid="stSidebar"] div[data-testid="stFileUploaderDropzoneInstructions"],
-section[data-testid="stSidebar"] div[data-testid="stFileUploaderDropzoneInstructions"] *{
-  display: none !important;
-}
-section[data-testid="stSidebar"] div[data-testid="stFileUploaderDropzone"]{
-  padding: .35rem .45rem !important;
-  min-height: 48px !important;
-  border-radius: 12px !important;
-  background: rgba(255,255,255,.10) !important;
-  border: 1px solid rgba(255,255,255,.22) !important;
-}
-section[data-testid="stSidebar"] div[data-testid="stFileUploaderDropzone"]:hover{
-  border-color: rgba(255,255,255,.35) !important;
-}
-section[data-testid="stSidebar"] div[data-testid="stFileUploaderDropzone"] button{
-  padding: .35rem .6rem !important;
-  border-radius: 10px !important;
-  font-weight: 950 !important;
-}
-
-/* Bottone del file-uploader: solo icona (contraria al download) */
-section[data-testid="stSidebar"] div[data-testid="stFileUploaderDropzone"] button span{ display:none !important; }
-section[data-testid="stSidebar"] div[data-testid="stFileUploaderDropzone"] button::before{
-  content: "📦⬆️";
-  font-size: 1.15rem;
-  line-height: 1;
-}
 section[data-testid="stSidebar"] div[data-baseweb="select"] > div{
   background: #ffffff !important;
   border: 1px solid rgba(15,23,42,.22) !important;
@@ -1212,176 +1052,6 @@ section[data-testid="stSidebar"] .stDownloadButton > button{
 .nato-word{font-size:.70rem;font-weight:850;color:#334155;}
 @media print{.nato-title,.nato-mini,.nato-spell{display:none!important;}}
 
-
-/* Expander: sostituisce la freccia con + / - e nasconde la freccia originale (anche se cambia DOM) */
-div[data-testid="stExpander"] [data-testid="stExpanderToggleIcon"],
-div[data-testid="stExpander"] summary svg,
-div[data-testid="stExpander"] summary [data-testid="stExpanderToggleIcon"],
-div[data-testid="stExpander"] summary span[aria-hidden="true"]{
-  display: none !important;   /* nasconde la freccia originale */
-}
-
-/* Header expander in sidebar: NON deve diventare bianco quando aperto */
-section[data-testid="stSidebar"] div[data-testid="stExpander"] summary{
-  background: linear-gradient(180deg, rgba(30,41,59,.55), rgba(15,23,42,.35)) !important;
-  border: 1px solid rgba(255,255,255,.10) !important;
-  border-radius: 16px !important;
-}
-section[data-testid="stSidebar"] div[data-testid="stExpander"][open] summary{
-  background: linear-gradient(180deg, rgba(30,41,59,.60), rgba(15,23,42,.40)) !important;
-  border-color: rgba(255,255,255,.14) !important;
-}
-
-div[data-testid="stExpander"] summary{
-  position: relative !important;
-  padding-left: 2.1rem !important; /* spazio per + / - */
-}
-div[data-testid="stExpander"] summary::before{
-  content: "+" !important;
-  position: absolute !important;
-  left: .55rem !important;
-  top: 50% !important;
-  transform: translateY(-50%) !important;
-  color: #ffb300 !important;
-  font-weight: 950 !important;
-  font-size: 1.35rem !important;
-  line-height: 1 !important;
-}
-div[data-testid="stExpander"][open] summary::before{
-  content: "−" !important;
-}
-
-/* Download QR: bottone più largo/alto e solo icone */
-section[data-testid="stSidebar"] div[data-testid="stDownloadButton"] button{
-  width: 2.75rem !important;
-  height: 2.75rem !important;
-  padding: 0 !important;
-  border-radius: 14px !important;
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-}
-section[data-testid="stSidebar"] div[data-testid="stDownloadButton"] button span{
-  font-size: 1.15rem !important;
-  line-height: 1 !important;
-}
-
-/* Sidebar: bottoni azione solo icone (stessa dimensione) */
-section[data-testid="stSidebar"] div[data-testid="stExpander"] button[kind="secondary"]{
-  width: 2.35rem !important;
-  height: 2.35rem !important;
-  padding: 0 !important;
-  border-radius: 12px !important;
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-}
-section[data-testid="stSidebar"] div[data-testid="stExpander"] button[kind="secondary"] span{
-  font-size: 1.05rem !important;
-  line-height: 1 !important;
-}
-
-
-/* ====== MOBILE: Modulo da campo leggibile anche in dark mode ====== */
-@media (max-width: 768px){
-
-  :root { color-scheme: light; }
-
-  /* sfondo generale chiaro */
-  .stApp{
-    background: #f5f7fa !important;
-    color: #0b1220 !important;
-  }
-
-  /* card e contenitori */
-  .pc-card{
-    background: #ffffff !important;
-    border: 1px solid rgba(15,23,42,.14) !important;
-  }
-
-  /* input / textarea: sempre chiari */
-  input, textarea{
-    background-color: #ffffff !important;
-    color: #0b1220 !important;
-    border: 1px solid rgba(15,23,42,.20) !important;
-    border-radius: 12px !important;
-    padding: 0.70rem 0.85rem !important;
-    font-size: 1.02rem !important;
-    font-weight: 800 !important;
-  }
-  textarea{ min-height: 120px !important; }
-
-  input::placeholder, textarea::placeholder{
-    color: rgba(71,85,105,.85) !important;
-  }
-
-  /* label più leggibili */
-  label, .stMarkdown, .stCaption, p, span{
-    -webkit-text-size-adjust: 100%;
-  }
-
-  /* Bottoni: touch-friendly */
-  .stButton>button, button{
-    border-radius: 14px !important;
-    padding: 0.75rem 1.0rem !important;
-    font-size: 1.05rem !important;
-    font-weight: 900 !important;
-    min-height: 46px !important;
-  }
-
-  /* Submit button nei form (es. Rapporto completo): grande, full-width, sempre leggibile */
-  div[data-testid="stFormSubmitButton"] > button,
-  div[data-testid="stFormSubmitButton"] button{
-    width: 100% !important;
-    min-height: 56px !important;
-    font-size: 1.12rem !important;
-    letter-spacing: .2px !important;
-  }
-
-  /* Barra "sticky" solo nel modulo da campo: il bottone invio resta sempre a portata */
-  .pc-card div[data-testid="stFormSubmitButton"]{
-    position: sticky !important;
-    bottom: 10px !important;
-    z-index: 50 !important;
-    padding: 0.35rem 0 !important;
-    background: linear-gradient(180deg, rgba(245,247,250,0) 0%, rgba(245,247,250,0.92) 35%, rgba(245,247,250,1) 100%) !important;
-  }
-
-  /* Pulsanti dell'uploader foto / file: miglior contrasto */
-  div[data-testid="stFileUploader"] section{
-    background: #ffffff !important;
-    border: 1px solid rgba(15,23,42,.14) !important;
-    border-radius: 14px !important;
-  }
-
-  /* Primari ben visibili */
-  button[kind="primary"], .stButton>button[kind="primary"]{
-    background: linear-gradient(135deg, #1976d2 0%, #0d47a1 100%) !important;
-    color: #ffffff !important;
-    border: 1px solid rgba(255,255,255,.20) !important;
-    box-shadow: 0 10px 22px rgba(13,71,161,.22) !important;
-  }
-
-  /* Nel modulo da campo: bottone invio ancora più evidente (verde) */
-  .pc-card button[kind="primary"], .pc-card .stButton>button[kind="primary"]{
-    background: linear-gradient(135deg, #2e7d32 0%, #1b5e20 100%) !important;
-    box-shadow: 0 12px 26px rgba(27,94,32,.22) !important;
-  }
-
-  /* Secondari chiari */
-  button[kind="secondary"], .stButton>button[kind="secondary"]{
-    background: #e3f2fd !important;
-    color: #0d47a1 !important;
-    border: 1px solid rgba(13,71,161,.18) !important;
-  }
-
-  /* Download button in campo: più largo e leggibile */
-  div[data-testid="stDownloadButton"] > button{
-    width: 100% !important;
-  }
-
-}
-
 </style>
 """, unsafe_allow_html=True)
 
@@ -1399,160 +1069,122 @@ with st.sidebar:
     st.divider()
 
     if ruolo == "SALA OPERATIVA":
-        st.markdown("## ➕ SQUADRE ATTIVE")
+        st.markdown("## 👥 SQUADRE")
         st.caption(f"Totale: **{len(st.session_state.squadre)}**")
 
+        # --- Lista compatta (niente cerca squadre) ---
         squadre_sorted = sorted(list(st.session_state.squadre.keys()))
-
-        # pulizia selezioni se una squadra viene rinominata/eliminata
-        if st.session_state.get("team_open") and st.session_state.team_open not in st.session_state.squadre:
-            st.session_state.team_open = None
-        if st.session_state.get("team_edit_open") and st.session_state.team_edit_open not in st.session_state.squadre:
-            st.session_state.team_edit_open = None
-        if st.session_state.get("team_qr_open") and st.session_state.team_qr_open not in st.session_state.squadre:
-            st.session_state.team_qr_open = None
-
         for team in squadre_sorted:
             inf = get_squadra_info(team)
-            hx = team_hex(team)
+            stato_hex = COLORI_STATI.get(inf["stato"], {}).get("hex", "#e2e8f0")
             capo_txt = inf["capo"] if inf["capo"] else "—"
             tel_txt = inf["tel"] if inf["tel"] else "—"
 
-            exp_open = (st.session_state.get("team_open") == team)
-            with st.expander(f"●  {team}", expanded=exp_open):
-                st.markdown(
-                    f"<div style='display:flex;align-items:center;gap:10px;'>"
-                    f"<div class='pc-sqdot' style='background:{hx};margin-top:0;'></div>"
-                    f"<div style='flex:1;'>"
-                    f"<div class='pc-sqname' style='font-size:1.02rem'>{team}</div>"
-                    f"<div class='pc-sqsub'>👤 {capo_txt} · 📞 {tel_txt}</div>"
-                    f"</div></div>",
-                    unsafe_allow_html=True,
+            c0, c1, c2 = st.columns([0.18, 1, 0.60])
+            c0.markdown(
+                f"<div class='pc-sqdot' style='background:{stato_hex};'></div>",
+                unsafe_allow_html=True,
+            )
+            c1.markdown(
+                f"<div class='pc-sqrow'><div class='pc-sqname'>{team}</div>"
+                f"<div class='pc-sqsub'>👤 {capo_txt} · 📞 {tel_txt}</div></div>",
+                unsafe_allow_html=True,
+            )
+            b_edit, b_qr = c2.columns(2)
+            if b_edit.button("✏️", key=f"btn_edit_{team}"):
+                st.session_state.team_edit_open = team
+                st.session_state.team_qr_open = None
+                st.rerun()
+            if b_qr.button("📱", key=f"btn_qr_{team}"):
+                st.session_state.team_qr_open = team
+                st.session_state.team_edit_open = None
+                st.rerun()
+
+        # --- Modulo gestione (pulito e centralizzato) ---
+        st.divider()
+        st.markdown("## 🧰 Gestione squadra")
+
+        # se non c'è una selezione attiva, usa la prima
+        if st.session_state.get("team_edit_open") not in st.session_state.squadre and st.session_state.squadre:
+            st.session_state.team_edit_open = sorted(list(st.session_state.squadre.keys()))[0]
+
+        team_sel = st.selectbox(
+            "Seleziona squadra",
+            options=sorted(list(st.session_state.squadre.keys())),
+            index=sorted(list(st.session_state.squadre.keys())).index(st.session_state.team_edit_open)
+            if st.session_state.get("team_edit_open") in st.session_state.squadre
+            else 0,
+            key="team_manage_sel",
+        )
+        st.session_state.team_edit_open = team_sel
+        inf = get_squadra_info(team_sel)
+        st.markdown(chip_stato(inf["stato"]), unsafe_allow_html=True)
+
+        with st.form("form_team_manage"):
+            new_name = st.text_input("Nome squadra", value=team_sel, help="Il nome viene salvato in MAIUSCOLO")
+            new_capo = st.text_input("Caposquadra", value=inf["capo"], placeholder="Es. Rossi Mario")
+            new_tel = st.text_input("Telefono", value=inf["tel"], placeholder="Es. 3331234567")
+            s1, s2 = st.columns(2)
+            save = s1.form_submit_button("💾 Salva")
+            open_qr = s2.form_submit_button("📱 Apri QR")
+
+        if save:
+            ok, msg = update_team(team_sel, new_name, new_capo, new_tel)
+            (st.success if ok else st.warning)(msg)
+            if ok:
+                # allinea selezione su nuovo nome
+                st.session_state.team_edit_open = (new_name or "").strip().upper()
+                st.session_state.team_qr_open = None
+                st.rerun()
+
+        if open_qr:
+            st.session_state.team_qr_open = team_sel
+            st.rerun()
+
+        st.caption("Se il QR è stato condiviso per errore, rigenera il token.")
+        ctk1, ctk2 = st.columns(2)
+        if ctk1.button("♻️ Rigenera token", key="regen_token_manage"):
+            regenerate_team_token(team_sel)
+            st.success("Token rigenerato ✅")
+            st.session_state.team_qr_open = team_sel
+            st.rerun()
+
+        if ctk2.button("🗑️ Elimina", key="delete_team_manage"):
+            st.session_state["_del_arm"] = team_sel
+
+        if st.session_state.get("_del_arm") == team_sel:
+            st.warning("Conferma eliminazione: questa azione è irreversibile.")
+            conf = st.checkbox("Confermo eliminazione squadra", key="confdel_manage")
+            if st.button("✅ Conferma elimina", disabled=not conf, key="confirm_delete_manage"):
+                ok, msg = delete_team(team_sel)
+                (st.success if ok else st.warning)(msg)
+                st.session_state["_del_arm"] = None
+                st.rerun()
+            if st.button("❌ Annulla", key="cancel_delete_manage"):
+                st.session_state["_del_arm"] = None
+                st.rerun()
+
+        if st.session_state.get("team_qr_open") == team_sel:
+            st.divider()
+            st.markdown("### 📱 QR accesso caposquadra")
+
+            base_url = (st.session_state.get("BASE_URL") or "").strip().rstrip("/")
+            token = st.session_state.squadre[team_sel].get("token", "")
+
+            if not base_url.startswith("http"):
+                st.warning("⚠️ Imposta l'URL base: https://…streamlit.app")
+            else:
+                link = f"{base_url}/?mode=campo&team={team_sel}&token={token}"
+                st.code(link, language="text")
+                png = qr_png_bytes(link)
+                st.image(png, width=230)
+                st.download_button(
+                    "⬇️ Scarica QR (PNG)",
+                    data=png,
+                    file_name=f"QR_{team_sel.replace(' ', '_')}.png",
+                    mime="image/png",
+                    key=f"dlqr_{team_sel}",
                 )
-
-                
-                # Riga comandi (chip a sinistra + icone a destra)
-                r1, r2, r3, r4, r5 = st.columns([6, 1, 1, 1, 1])
-
-                with r1:
-                    st.markdown(chip_stato(inf["stato"]), unsafe_allow_html=True)
-
-                # ✏️ Modifica (apre form sotto il nome)
-                if r2.button("✏️", key=f"open_edit_{team}", help="Modifica squadra", type="secondary"):
-                    st.session_state.team_open = team
-                    st.session_state.team_edit_open = team
-                    st.session_state.team_qr_open = None
-                    st.session_state["_del_arm"] = None
-                    st.rerun()
-
-                # 📱 QR
-                if r3.button("📱", key=f"open_qr_{team}", help="Mostra QR", type="secondary"):
-                    st.session_state.team_open = team
-                    st.session_state.team_qr_open = team
-                    st.session_state.team_edit_open = None
-                    st.session_state["_del_arm"] = None
-                    st.rerun()
-
-                # ♻️ Token
-                if r4.button("♻️", key=f"regen_tok_{team}", help="Rigenera token", type="secondary"):
-                    regenerate_team_token(team)
-                    st.session_state.team_open = team
-                    st.session_state.team_qr_open = team
-                    st.session_state.team_edit_open = None
-                    st.success("Token rigenerato ✅")
-                    st.rerun()
-
-                # 🗑️ Elimina (arm)
-                if r5.button("🗑️", key=f"del_{team}", help="Elimina squadra", type="secondary"):
-                    st.session_state.team_open = team
-                    st.session_state["_del_arm"] = team
-                    st.session_state.team_edit_open = None
-                    st.session_state.team_qr_open = None
-                    st.rerun()
-                # --- Modifica sotto il nome (solo se aperta) ---
-                if st.session_state.get("team_edit_open") == team:
-                    st.divider()
-                    st.markdown("### ✏️ Modifica squadra")
-
-                    with st.form(f"form_edit_{team}"):
-                        new_name = st.text_input("Nome squadra", value=team, help="Il nome viene salvato in MAIUSCOLO")
-                        new_capo = st.text_input("Caposquadra", value=inf["capo"], placeholder="Es. Rossi Mario")
-                        new_tel = st.text_input("Telefono", value=inf["tel"], placeholder="Es. 3331234567")
-                        cA, cB = st.columns(2)
-                        save = cA.form_submit_button("💾 Salva")
-                        close = cB.form_submit_button("✅ Chiudi")
-
-                    if save:
-                        ok, msg = update_team(team, new_name, new_capo, new_tel)
-                        (st.success if ok else st.warning)(msg)
-                        if ok:
-                            new_t = (new_name or "").strip().upper()
-                            st.session_state.team_open = new_t
-                            st.session_state.team_edit_open = None
-                            st.session_state.team_qr_open = None
-                            st.rerun()
-
-                    if close:
-                        st.session_state.team_edit_open = None
-                        st.rerun()
-
-                # --- QR sotto il nome (solo se aperto) ---
-                if st.session_state.get("team_qr_open") == team:
-                    st.divider()
-                    st.markdown("### 📱 QR accesso caposquadra")
-
-                    base_url = (st.session_state.get("BASE_URL") or "").strip().rstrip("/")
-                    token = st.session_state.squadre[team].get("token", "")
-
-                    if not base_url.startswith("http"):
-                        st.warning("⚠️ Imposta l'URL base: https://…streamlit.app")
-                    else:
-                        link = f"{base_url}/?mode=campo&team={team}&token={token}"
-
-                        # Link condivisibile (con pulsante copia integrato)
-                        st.text_input(
-                            "Link da copiare / inoltrare",
-                            value=link,
-                            key=f"sharelink_{team}",
-                        )
-
-                        # Link rapido WhatsApp (utile da PC o da telefono)
-                        wa_text = urllib.parse.quote(f"Link modulo caposquadra ({team}): {link}")
-                        st.markdown(
-                            f"<a href='https://wa.me/?text={wa_text}' target='_blank' "
-                            f"style='text-decoration:none;'>"
-                            f"<span style='display:inline-block;padding:.45rem .7rem;border-radius:10px;"
-                            f"border:1px solid #90caf9;background:#e3f2fd;color:#0d47a1;font-weight:600;'>"
-                            f"📲 Invia su WhatsApp</span></a>",
-                            unsafe_allow_html=True,
-                        )
-
-                        # QR
-                        png = qr_png_bytes(link)
-                        st.image(png, width=230)
-                        st.download_button(
-                            "⬇️📱",
-                            data=png,
-                            file_name=f"QR_{team.replace(' ', '_')}.png",
-                            mime="image/png",
-                            key=f"dlqr_{team}",
-                        )
-
-                # --- Conferma eliminazione (solo se armata) ---
-                if st.session_state.get("_del_arm") == team:
-                    st.divider()
-                    st.warning("Conferma eliminazione: questa azione è irreversibile.")
-                    conf = st.checkbox("Confermo eliminazione squadra", key=f"confdel_{team}")
-                    cD, cE = st.columns(2)
-                    if cD.button("✅ Conferma elimina", disabled=not conf, key=f"confirm_del_{team}"):
-                        ok, msg = delete_team(team)
-                        (st.success if ok else st.warning)(msg)
-                        st.session_state["_del_arm"] = None
-                        st.session_state.team_open = None
-                        st.rerun()
-                    if cE.button("❌ Annulla", key=f"cancel_del_{team}"):
-                        st.session_state["_del_arm"] = None
-                        st.rerun()
 
         st.divider()
         st.markdown("## ➕ CREA SQUADRA")
@@ -1569,28 +1201,19 @@ with st.sidebar:
                 st.warning("Esiste già una squadra con questo nome.")
             else:
                 token = uuid.uuid4().hex
-                used = {(inf.get("mhex") or "").strip() for inf in st.session_state.squadre.values()}
-                used = {hx for hx in used if hx.startswith("#") and len(hx) == 7}
-                colore = _pick_next_team_color(set(used))
-
                 st.session_state.squadre[nome] = {
                     "stato": "In attesa al COC",
                     "capo": (capo or "").strip(),
                     "tel": (tel or "").strip(),
                     "token": token,
-                    "mhex": colore,
                 }
                 save_data_to_disk()
-                # apri subito la scheda e mostra QR
-                st.session_state.team_open = nome
                 st.session_state.team_qr_open = nome
-                st.session_state.team_edit_open = None
-                st.success("✅ Squadra creata! QR visibile sotto.")
+                st.success("✅ Squadra creata! (QR aperto)")
                 st.rerun()
 
         st.divider()
         st.markdown("## 🌐 URL APP (per QR)")
-
         st.caption("Se hai streamlit-js-eval si compila da solo; altrimenti incolla l'URL.")
         st.session_state.BASE_URL = st.text_input(
             "Base URL Streamlit Cloud",
@@ -1602,7 +1225,6 @@ with st.sidebar:
     # BACKUP in fondo
     st.divider()
     st.markdown("## 💾 Backup / Ripristino")
-
     payload_now = {
         "brogliaccio": st.session_state.brogliaccio,
         "inbox": st.session_state.inbox,
@@ -1614,36 +1236,19 @@ with st.sidebar:
         "ev_nome": st.session_state.ev_nome,
         "ev_desc": st.session_state.ev_desc,
         "BASE_URL": st.session_state.get("BASE_URL", ""),
-        "cnt_conclusi": st.session_state.get("cnt_conclusi", 0),
     }
-
-    # 📦⬇️ Scarica
     st.download_button(
-        "📦⬇️",
+        "⬇️ Scarica BACKUP JSON",
         data=json.dumps(payload_now, ensure_ascii=False, indent=2).encode("utf-8"),
         file_name="backup_radio_manager.json",
         mime="application/json",
-        help="Scarica un backup completo (JSON) di brogliaccio, inbox, squadre e impostazioni.",
-        use_container_width=True,
     )
-
-    # 📦⬆️ Ripristina (carica JSON: ripristino automatico)
-    st.markdown("**📦⬆️ Carica backup**")
-    up = st.file_uploader(
-        "" ,
-        type=["json"],
-        key="restore_backup_json",
-        label_visibility="collapsed",
-        help="Carica un backup JSON esportato dal sistema: il ripristino parte automaticamente.",
-    )
-
+    up = st.file_uploader("⬆️ Ripristina da backup JSON", type=["json"])
     if up is not None:
-        try:
-            load_data_from_uploaded_json(up.getvalue())
-            st.success("✅ Ripristino completato.")
+        if st.button("🔁 RIPRISTINA ORA"):
+            load_data_from_uploaded_json(up.read())
+            st.success("Ripristino completato.")
             st.rerun()
-        except Exception:
-            st.error("❌ Backup non valido o file corrotto.")
 
 # =========================
 # HEADER
@@ -1686,77 +1291,15 @@ if badge_ruolo == "MODULO CAPOSQUADRA":
 
     share_gps = st.checkbox("📍 Includi posizione GPS (Privacy)", value=True)
 
-    # Helper: posizione da inviare (GPS se disponibile, altrimenti manuale)
-    def get_field_pos_to_send(_share: bool):
-        if not _share:
-            return None
-        p = st.session_state.get("field_gps")
-        if isinstance(p, list) and len(p) == 2:
-            return p
-        mp = st.session_state.get("field_manual_pos")
-        if (
-            isinstance(mp, list)
-            and len(mp) == 2
-            and mp[0] is not None
-            and mp[1] is not None
-        ):
-            return mp
-        return None
-
-
-
-    # GPS dal telefono (richiede permesso posizione nel browser)
-    if "field_gps" not in st.session_state:
-        st.session_state.field_gps = None
-
-    gps_c1, gps_c2 = st.columns([2, 5])
-    with gps_c1:
-        # Pulsante più "touch" su smartphone
-        if st.button("📍 GPS", help="Aggiorna GPS dal telefono", use_container_width=True):
-            st.session_state.field_gps = get_phone_gps_once()
-
-    with gps_c2:
-        if share_gps:
-            _p = st.session_state.get("field_gps")
-            if isinstance(_p, list) and len(_p) == 2:
-                st.caption(f"GPS attuale: **{_p[0]:.6f}, {_p[1]:.6f}**")
-            else:
-                st.caption("GPS: **non disponibile**. Consenti la posizione sul telefono e premi 📍.")
-        else:
-            st.caption("GPS disattivato (Privacy).")
-
-
-
-    # Fallback manuale (se il GPS non viene letto dal browser)
-    if "field_manual_pos" not in st.session_state:
-        st.session_state.field_manual_pos = [None, None]
-
-    if share_gps:
-        _p = st.session_state.get("field_gps")
-        if not (isinstance(_p, list) and len(_p) == 2):
-            st.caption("✍️ Se il GPS non viene letto, inserisci manualmente le coordinate (da Google Maps).")
-            mc1, mc2 = st.columns(2)
-            # default: centro mappa corrente (solo come comodità)
-            try:
-                _dlat = float(st.session_state.pos_mappa[0])
-                _dlon = float(st.session_state.pos_mappa[1])
-            except Exception:
-                _dlat, _dlon = 45.0, 11.0
-            lat_man = mc1.number_input("LAT (manuale)", value=_dlat, format="%.6f", key="field_lat_manual")
-            lon_man = mc2.number_input("LON (manuale)", value=_dlon, format="%.6f", key="field_lon_manual")
-            st.session_state.field_manual_pos = [float(lat_man), float(lon_man)]
-    else:
-        st.session_state.field_manual_pos = [None, None]
-
     st.subheader("📍 Invio rapido")
     msg_rapido = st.text_input("Nota breve:", placeholder="In movimento, arrivati...")
 
-    if st.button("🚀 INVIA RAPIDO", use_container_width=True):
-        pos_da_inviare = get_field_pos_to_send(share_gps)
+    if st.button("🚀 INVIA COORDINATE E MESSAGGIO"):
+        pos_da_inviare = st.session_state.pos_mappa if share_gps else None
         st.session_state.inbox.append(
-            {"id": uuid.uuid4().hex, "ora": datetime.now().strftime("%H:%M"), "sq": sq_c, "msg": msg_rapido or "Aggiornamento posizione", "foto": None, "pos": pos_da_inviare}
+            {"ora": datetime.now().strftime("%H:%M"), "sq": sq_c, "msg": msg_rapido or "Aggiornamento posizione", "foto": None, "pos": pos_da_inviare}
         )
-        save_data_to_disk()
+        save_data_to_disk(force=True)
         st.success("✅ Inviato!")
 
     st.divider()
@@ -1764,12 +1307,12 @@ if badge_ruolo == "MODULO CAPOSQUADRA":
         st.subheader("📸 Rapporto completo")
         msg_c = st.text_area("DESCRIZIONE:")
         foto = st.file_uploader("FOTO:", type=["jpg", "jpeg", "png"])
-        if st.form_submit_button("🚀 INVIA RAPPORTO COMPLETO", type="primary", use_container_width=True):
-            pos_da_inviare = get_field_pos_to_send(share_gps)
+        if st.form_submit_button("INVIA TUTTO + GPS"):
+            pos_da_inviare = st.session_state.pos_mappa if share_gps else None
             st.session_state.inbox.append(
-                {"id": uuid.uuid4().hex, "ora": datetime.now().strftime("%H:%M"), "sq": sq_c, "msg": msg_c, "foto": foto.read() if foto else None, "pos": pos_da_inviare}
+                {"ora": datetime.now().strftime("%H:%M"), "sq": sq_c, "msg": msg_c, "foto": foto.read() if foto else None, "pos": pos_da_inviare}
             )
-            save_data_to_disk()
+            save_data_to_disk(force=True)
             st.success("✅ Inviato!")
 
     st.markdown("</div>", unsafe_allow_html=True)
@@ -1794,26 +1337,17 @@ def metric_box(col, icon, label, value):
 
 c1.markdown(metric_box(COLORI_STATI["In uscita dal COC"]["hex"], "🚪", "Uscita", st_lista.count("In uscita dal COC")), unsafe_allow_html=True)
 c2.markdown(metric_box(COLORI_STATI["Intervento in corso"]["hex"], "🔥", "In corso", st_lista.count("Intervento in corso")), unsafe_allow_html=True)
-c3.markdown(metric_box(COLORI_STATI["Intervento concluso"]["hex"], "✅", "Conclusi", st.session_state.get("cnt_conclusi", 0)), unsafe_allow_html=True)
-with c3:
-    if st.button("↺ Reset conclusi", help="Azzera il contatore cumulativo degli interventi conclusi", key="reset_cnt_conclusi", use_container_width=True):
-        st.session_state.cnt_conclusi = 0
-        save_data_to_disk()
-        st.rerun()
+c3.markdown(metric_box(COLORI_STATI["Intervento concluso"]["hex"], "✅", "Conclusi", st_lista.count("Intervento concluso")), unsafe_allow_html=True)
 c4.markdown(metric_box(COLORI_STATI["Rientrata al Coc"]["hex"], "↩️", "Rientro", st_lista.count("Rientrata al Coc")), unsafe_allow_html=True)
 c5.markdown(metric_box(COLORI_STATI["In attesa al COC"]["hex"], "🏠", "Al COC", st_lista.count("In attesa al COC")), unsafe_allow_html=True)
 
-
 # =========================
 # INBOX APPROVAZIONE
-# (renderizzato sopra la MAPPA)
 # =========================
-def render_inbox_approval():
-    if not st.session_state.get('inbox'):
-        return
-    for data in list(st.session_state.inbox):
-        msg_id = data.get("id") or uuid.uuid4().hex
-        data["id"] = msg_id
+if st.session_state.inbox:
+    st.markdown(f"<div class='pc-alert'>⚠️ RICEVUTI {len(st.session_state.inbox)} AGGIORNAMENTI DA VALIDARE</div>", unsafe_allow_html=True)
+
+    for i, data in enumerate(st.session_state.inbox):
         sq_in = data["sq"]
         inf_in = get_squadra_info(sq_in)
 
@@ -1827,11 +1361,11 @@ def render_inbox_approval():
             if data["foto"]:
                 st.image(data["foto"], width=220)
 
-            st_v = st.selectbox("Nuovo Stato:", list(COLORI_STATI.keys()), key=f"sv_inbox_{msg_id}")
+            st_v = st.selectbox("Nuovo Stato:", list(COLORI_STATI.keys()), key=f"sv_inbox_{i}")
             st.markdown(chip_stato(st_v), unsafe_allow_html=True)
 
             cb1, cb2 = st.columns(2)
-            if cb1.button("✅ APPROVA", key=f"ap_{msg_id}"):
+            if cb1.button("✅ APPROVA", key=f"ap_{i}"):
                 pref = "[AUTO]" if data["pos"] else "[AUTO-PRIVACY]"
                 st.session_state.brogliaccio.insert(
                     0,
@@ -1839,17 +1373,14 @@ def render_inbox_approval():
                      "mit": f"{pref} {data['msg']}", "ris": "VALIDATO", "op": st.session_state.op_name,
                      "pos": data["pos"], "foto": data["foto"]}
                 )
-                prev_st = st.session_state.squadre.get(sq_in, {}).get("stato")
                 st.session_state.squadre[sq_in]["stato"] = st_v
-                if st_v == "Intervento concluso" and prev_st != "Intervento concluso":
-                    st.session_state.cnt_conclusi = int(st.session_state.get("cnt_conclusi", 0) or 0) + 1
-                st.session_state.inbox = [m for m in st.session_state.inbox if (m.get("id") != msg_id)]
-                save_data_to_disk()
+                st.session_state.inbox.pop(i)
+                save_data_to_disk(force=True)
                 st.rerun()
 
-            if cb2.button("🗑️ SCARTA", key=f"sc_{msg_id}"):
-                st.session_state.inbox = [m for m in st.session_state.inbox if (m.get("id") != msg_id)]
-                save_data_to_disk()
+            if cb2.button("🗑️ SCARTA", key=f"sc_{i}"):
+                st.session_state.inbox.pop(i)
+                save_data_to_disk(force=True)
                 st.rerun()
 
 # =========================
@@ -1904,36 +1435,17 @@ with t_rad:
                     {"ora": datetime.now().strftime("%H:%M"), "chi": chi, "sq": sq, "st": st_s,
                      "mit": mit, "ris": ris, "op": st.session_state.op_name, "pos": [lat, lon], "foto": None}
                 )
-                prev_st = st.session_state.squadre.get(sq, {}).get("stato")
                 st.session_state.squadre[sq]["stato"] = st_s
-                if st_s == "Intervento concluso" and prev_st != "Intervento concluso":
-                    st.session_state.cnt_conclusi = int(st.session_state.get("cnt_conclusi", 0) or 0) + 1
                 st.session_state.pos_mappa = [lat, lon]
-                save_data_to_disk()
+                save_data_to_disk(force=True)
                 st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
     with r:
-        # Avvisi e approvazioni: subito sopra la mappa
-        if st.session_state.get('inbox'):
-            cA, cB = st.columns([1, 0.25])
-            with cA:
-                st.markdown(f"<div class='pc-alert'>⚠️ RICEVUTI {len(st.session_state.inbox)} AGGIORNAMENTI DA VALIDARE</div>", unsafe_allow_html=True)
-            with cB:
-                if st.button('🔄', key='refresh_console', help='Aggiorna dati dalla memoria condivisa'):
-                    load_data_from_disk()
-                    st.rerun()
-            try:
-                render_inbox_approval()
-            except Exception as _e:
-                st.error("Errore visualizzazione inbox (non blocca la mappa). Premi 🔄")
-
-            st.divider()
-
         st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
         df_all = pd.DataFrame(st.session_state.brogliaccio)
-        m = build_folium_map_from_df(df_all, center=st.session_state.pos_mappa, zoom=14, inbox=st.session_state.get('inbox'))
-        st_folium(m, width="100%", height=450)
+        m = build_folium_map_from_df(df_all, center=st.session_state.pos_mappa, zoom=14)
+        st_folium(m, width="100%", height=450, returned_objects=[])
         # =========================
         # NATO – Convertitore (solo sala radio)
         # =========================
@@ -2122,6 +1634,9 @@ with t_rep:
 # =========================
 st.markdown("### 📋 REGISTRO EVENTI")
 
+# Prestazioni: con molti eventi, mostrare tutto rallenta. Limita la lista (puoi aumentare quando serve).
+max_eventi = st.number_input("Quanti eventi mostrare nel registro", min_value=50, max_value=5000, value=250, step=50, help="Riduci questo valore se la pagina si blocca con tanti interventi.")
+
 if st.session_state.open_map_event is not None:
     idx = st.session_state.open_map_event
     if 0 <= idx < len(st.session_state.brogliaccio):
@@ -2138,7 +1653,7 @@ if st.session_state.open_map_event is not None:
                 tooltip=f"{row.get('sq','')} · {row.get('st','')}",
                 icon=folium.Icon(color=COLORI_STATI.get(row.get("st",""), {}).get("color", "blue")),
             ).add_to(m_ev)
-            st_folium(m_ev, width="100%", height=420)
+            st_folium(m_ev, width="100%", height=420, returned_objects=[])
         else:
             st.info("Evento senza coordinate GPS (OMISSIS).")
 
@@ -2148,7 +1663,11 @@ if st.session_state.open_map_event is not None:
 
         st.markdown("</div>", unsafe_allow_html=True)
 
-for i, b in enumerate(st.session_state.brogliaccio):
+
+if len(st.session_state.brogliaccio) > int(max_eventi):
+    st.info(f"Mostro gli ultimi {int(max_eventi)} eventi su {len(st.session_state.brogliaccio)} totali (per prestazioni).")
+
+for i, b in enumerate(st.session_state.brogliaccio[:int(max_eventi)]):
     gps_ok = isinstance(b.get("pos"), list) and len(b["pos"]) == 2
     gps_t = f"GPS: {b['pos'][0]:.4f}, {b['pos'][1]:.4f}" if gps_ok else "GPS: OMISSIS"
     a, c = call_flow_from_row(b)
@@ -2190,7 +1709,6 @@ if col_m1.button("🧹 CANCELLA TUTTI I DATI"):
     d = default_state_payload()
     st.session_state.brogliaccio = d["brogliaccio"]
     st.session_state.inbox = d["inbox"]
-    ensure_inbox_ids()
     st.session_state.squadre = d["squadre"]
     st.session_state.pos_mappa = d["pos_mappa"]
     st.session_state.op_name = d["op_name"]
@@ -2202,10 +1720,10 @@ if col_m1.button("🧹 CANCELLA TUTTI I DATI"):
     st.session_state.open_map_event = None
     st.session_state.team_edit_open = None
     st.session_state.team_qr_open = None
-    save_data_to_disk()
+    save_data_to_disk(force=True)
     st.success("Tutti i dati sono stati cancellati.")
     st.rerun()
 
 if col_m2.button("💾 SALVA ORA SU DISCO"):
-    save_data_to_disk()
+    save_data_to_disk(force=True)
     st.success("Salvato.")

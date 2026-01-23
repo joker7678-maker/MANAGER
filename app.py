@@ -197,6 +197,59 @@ def build_folium_map_from_df(df: pd.DataFrame, center: list, zoom: int = 13, inb
     return m
 
 
+def build_folium_map_from_events(events: List[dict], center: list, zoom: int = 13, inbox: Optional[List[dict]] = None) -> folium.Map:
+    """Mappa più veloce: usa direttamente la lista eventi (brogliaccio) senza pandas.
+
+    - prende l'ULTIMO punto per squadra (events è newest->oldest, quindi basta il primo punto visto per squadra)
+    - aggiunge anche posizioni 'pending' (inbox) senza sovrascrivere quelle già valide
+    """
+    m = folium.Map(location=center, zoom_start=zoom)
+
+    ultime_pos: Dict[str, Dict[str, Any]] = {}
+    seen = set()
+
+    if isinstance(events, list) and events:
+        # newest -> oldest: il primo GPS per squadra è l'ultima posizione
+        for row in events:
+            sq = (row.get("sq") or "").strip()
+            if not sq or sq in seen:
+                continue
+            pos = row.get("pos")
+            if isinstance(pos, list) and len(pos) == 2:
+                stt = (row.get("st") or "").strip()
+                ultime_pos[sq] = {"pos": pos, "st": stt}
+                seen.add(sq)
+                # ottimizzazione: se abbiamo già tutte le squadre, possiamo fermarci
+                if hasattr(st.session_state, "squadre") and len(seen) >= len(st.session_state.squadre):
+                    break
+
+    # posizioni pending inbox
+    if inbox:
+        for mmsg in inbox:
+            try:
+                sqp = (mmsg.get("sq") or "").strip()
+                posp = mmsg.get("pos")
+                if isinstance(posp, list) and len(posp) == 2 and sqp:
+                    ultime_pos.setdefault(sqp, {"pos": posp, "st": "📥 In attesa validazione"})
+            except Exception:
+                continue
+
+    for sq, info in ultime_pos.items():
+        stt = info.get("st") or ""
+        hx = team_hex(sq)
+        folium.CircleMarker(
+            location=info["pos"],
+            radius=8,
+            color=hx,
+            weight=3,
+            fill=True,
+            fill_color=hx,
+            fill_opacity=1.0,
+            tooltip=f"{sq}: {stt}" if stt else sq,
+        ).add_to(m)
+
+    return m
+
 def df_for_report(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
@@ -781,7 +834,11 @@ def default_state_payload():
         "cnt_conclusi": 0,
     }
 
-def save_data_to_disk():
+def save_data_to_disk(force: bool = False) -> bool:
+    """Salva su disco solo se i dati sono cambiati (riduce blocchi con tanti interventi).
+
+    Ritorna True se ha scritto su disco, False se non era necessario.
+    """
     payload = {
         "brogliaccio": st.session_state.brogliaccio,
         "inbox": st.session_state.inbox,
@@ -795,8 +852,27 @@ def save_data_to_disk():
         "BASE_URL": st.session_state.get("BASE_URL", ""),
         "cnt_conclusi": st.session_state.get("cnt_conclusi", 0),
     }
-    with open(DATA_PATH, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+    # Serializzazione stabile per confronto rapido
+    try:
+        payload_str = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    except Exception:
+        payload_str = None
+
+    if not force and payload_str is not None:
+        if st.session_state.get("_last_saved_payload") == payload_str:
+            return False
+
+    try:
+        tmp_path = DATA_PATH + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, DATA_PATH)
+        if payload_str is not None:
+            st.session_state["_last_saved_payload"] = payload_str
+        return True
+    except Exception:
+        return False
 
 def load_data_from_disk():
     if not os.path.exists(DATA_PATH):
@@ -955,7 +1031,6 @@ def get_phone_gps_once() -> Optional[List[float]]:
         return _extract_latlon(geo)
     except Exception:
         return None
-save_data_to_disk()
 
 # =========================
 # TEAM OPS
@@ -1868,7 +1943,6 @@ st.session_state.ev_tipo = cd2.selectbox("TIPO INTERVENTO", tipi, index=idx_tipo
 st.session_state.ev_nome = cd3.text_input("NOME EVENTO", value=st.session_state.ev_nome)
 st.session_state.ev_desc = cd4.text_input("DESCRIZIONE DETTAGLIATA", value=st.session_state.ev_desc)
 
-save_data_to_disk()
 st.markdown("</div>", unsafe_allow_html=True)
 
 # =========================
@@ -1931,9 +2005,14 @@ with t_rad:
             st.divider()
 
         st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
-        df_all = pd.DataFrame(st.session_state.brogliaccio)
-        m = build_folium_map_from_df(df_all, center=st.session_state.pos_mappa, zoom=14, inbox=st.session_state.get('inbox'))
-        st_folium(m, width="100%", height=450)
+        # (Performance) mappa senza pandas: usa direttamente brogliaccio
+        m = build_folium_map_from_events(
+            st.session_state.brogliaccio,
+            center=st.session_state.pos_mappa,
+            zoom=14,
+            inbox=st.session_state.get('inbox')
+        )
+        st_folium(m, width="100%", height=450, returned_objects=[])
         # =========================
         # NATO – Convertitore (solo sala radio)
         # =========================
@@ -2122,6 +2201,13 @@ with t_rep:
 # =========================
 st.markdown("### 📋 REGISTRO EVENTI")
 
+# (Performance) con molti interventi, limitare il numero di righe renderizzate evita blocchi UI
+_lim_opts = [100, 250, 500, 1000, "Tutti"]
+_lim = st.selectbox("Mostra nel registro:", _lim_opts, index=1, key="log_limit")
+_events = st.session_state.brogliaccio if _lim == "Tutti" else st.session_state.brogliaccio[:int(_lim)]
+if _lim != "Tutti" and len(st.session_state.brogliaccio) > int(_lim):
+    st.caption(f"Mostrati i primi **{int(_lim)}** eventi su **{len(st.session_state.brogliaccio)}** totali (per velocità).")
+
 if st.session_state.open_map_event is not None:
     idx = st.session_state.open_map_event
     if 0 <= idx < len(st.session_state.brogliaccio):
@@ -2138,7 +2224,7 @@ if st.session_state.open_map_event is not None:
                 tooltip=f"{row.get('sq','')} · {row.get('st','')}",
                 icon=folium.Icon(color=COLORI_STATI.get(row.get("st",""), {}).get("color", "blue")),
             ).add_to(m_ev)
-            st_folium(m_ev, width="100%", height=420)
+            st_folium(m_ev, width="100%", height=420, returned_objects=[])
         else:
             st.info("Evento senza coordinate GPS (OMISSIS).")
 
@@ -2148,7 +2234,7 @@ if st.session_state.open_map_event is not None:
 
         st.markdown("</div>", unsafe_allow_html=True)
 
-for i, b in enumerate(st.session_state.brogliaccio):
+for i, b in enumerate(_events):
     gps_ok = isinstance(b.get("pos"), list) and len(b["pos"]) == 2
     gps_t = f"GPS: {b['pos'][0]:.4f}, {b['pos'][1]:.4f}" if gps_ok else "GPS: OMISSIS"
     a, c = call_flow_from_row(b)

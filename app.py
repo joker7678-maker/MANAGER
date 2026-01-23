@@ -1370,12 +1370,14 @@ with st.sidebar:
         "BASE_URL": st.session_state.get("BASE_URL", ""),
     }
     st.download_button(
-        "⬇️ Scarica BACKUP JSON",
+        "📦⬇️",
         data=json.dumps(payload_now, ensure_ascii=False, indent=2).encode("utf-8"),
         file_name="backup_radio_manager.json",
         mime="application/json",
+        help="Scarica un backup completo (JSON) di brogliaccio, inbox, squadre e impostazioni.",
+        use_container_width=True,
     )
-    up = st.file_uploader("⬆️ Ripristina da backup JSON", type=["json"])
+    up = st.file_uploader("📦⬆️", type=["json"], help="Ripristina un backup JSON esportato dal sistema.")
     if up is not None:
         if st.button("🔁 RIPRISTINA ORA"):
             load_data_from_uploaded_json(up.read())

@@ -882,6 +882,46 @@ try:
 except Exception:
     pass
 
+
+
+# =========================
+# GEOLOCATION (CAPOSQUADRA)
+# =========================
+def _extract_latlon(geo: Any) -> Optional[List[float]]:
+    """Accetta vari formati (streamlit-js-eval) e ritorna [lat, lon] oppure None."""
+    if not isinstance(geo, dict):
+        return None
+
+    # Formato A: {"latitude": .., "longitude": ..}
+    lat = geo.get("latitude")
+    lon = geo.get("longitude")
+    if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
+        return [float(lat), float(lon)]
+
+    # Formato B: {"coords": {"latitude":.., "longitude":..}}
+    coords = geo.get("coords")
+    if isinstance(coords, dict):
+        lat = coords.get("latitude")
+        lon = coords.get("longitude")
+        if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
+            return [float(lat), float(lon)]
+
+    # Formato C: {"lat":.., "lng":..} / {"lon":..}
+    lat = geo.get("lat")
+    lon = geo.get("lng") if "lng" in geo else geo.get("lon")
+    if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
+        return [float(lat), float(lon)]
+
+    return None
+
+def get_phone_gps_once() -> Optional[List[float]]:
+    """Prova a leggere il GPS dal browser (telefono). Richiede streamlit-js-eval."""
+    try:
+        from streamlit_js_eval import get_geolocation  # type: ignore
+        geo = get_geolocation()
+        return _extract_latlon(geo)
+    except Exception:
+        return None
 save_data_to_disk()
 
 # =========================
@@ -1493,11 +1533,32 @@ if badge_ruolo == "MODULO CAPOSQUADRA":
 
     share_gps = st.checkbox("📍 Includi posizione GPS (Privacy)", value=True)
 
+
+    # GPS dal telefono (richiede permesso posizione nel browser)
+    if "field_gps" not in st.session_state:
+        st.session_state.field_gps = None
+
+    gps_c1, gps_c2 = st.columns([1, 5])
+    with gps_c1:
+        if st.button("📍", help="Aggiorna GPS dal telefono"):
+            st.session_state.field_gps = get_phone_gps_once()
+
+    with gps_c2:
+        if share_gps:
+            _p = st.session_state.get("field_gps")
+            if isinstance(_p, list) and len(_p) == 2:
+                st.caption(f"GPS attuale: **{_p[0]:.6f}, {_p[1]:.6f}**")
+            else:
+                st.caption("GPS: **non disponibile**. Consenti la posizione sul telefono e premi 📍.")
+        else:
+            st.caption("GPS disattivato (Privacy).")
+
+
     st.subheader("📍 Invio rapido")
     msg_rapido = st.text_input("Nota breve:", placeholder="In movimento, arrivati...")
 
     if st.button("🚀 INVIA COORDINATE E MESSAGGIO"):
-        pos_da_inviare = st.session_state.pos_mappa if share_gps else None
+        pos_da_inviare = st.session_state.get('field_gps') if share_gps else None
         st.session_state.inbox.append(
             {"ora": datetime.now().strftime("%H:%M"), "sq": sq_c, "msg": msg_rapido or "Aggiornamento posizione", "foto": None, "pos": pos_da_inviare}
         )
@@ -1510,7 +1571,7 @@ if badge_ruolo == "MODULO CAPOSQUADRA":
         msg_c = st.text_area("DESCRIZIONE:")
         foto = st.file_uploader("FOTO:", type=["jpg", "jpeg", "png"])
         if st.form_submit_button("INVIA TUTTO + GPS"):
-            pos_da_inviare = st.session_state.pos_mappa if share_gps else None
+            pos_da_inviare = st.session_state.get('field_gps') if share_gps else None
             st.session_state.inbox.append(
                 {"ora": datetime.now().strftime("%H:%M"), "sq": sq_c, "msg": msg_c, "foto": foto.read() if foto else None, "pos": pos_da_inviare}
             )

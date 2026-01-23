@@ -1173,7 +1173,7 @@ with st.sidebar:
     st.divider()
 
     if ruolo == "SALA OPERATIVA":
-        st.markdown("## 👥 SQUADRE")
+        st.markdown("## ➕ SQUADRE ATTIVE")
         st.caption(f"Totale: **{len(st.session_state.squadre)}**")
 
         squadre_sorted = sorted(list(st.session_state.squadre.keys()))
@@ -1356,63 +1356,50 @@ with st.sidebar:
 
     # BACKUP in fondo
     st.divider()
-    st.markdown("## 💾 Backup / Ripristino")
-    payload_now = {
-        "brogliaccio": st.session_state.brogliaccio,
-        "inbox": st.session_state.inbox,
-        "squadre": st.session_state.squadre,
-        "pos_mappa": st.session_state.pos_mappa,
-        "op_name": st.session_state.op_name,
-        "ev_data": str(st.session_state.ev_data),
-        "ev_tipo": st.session_state.ev_tipo,
-        "ev_nome": st.session_state.ev_nome,
-        "ev_desc": st.session_state.ev_desc,
-        "BASE_URL": st.session_state.get("BASE_URL", ""),
-    }
-    st.subheader("Backup dati")
+    
+st.markdown("## 💾 Backup / Ripristino")
 
-c1, c2 = st.columns(2)
+payload_now = {
+    "brogliaccio": st.session_state.brogliaccio,
+    "inbox": st.session_state.inbox,
+    "squadre": st.session_state.squadre,
+    "pos_mappa": st.session_state.pos_mappa,
+    "op_name": st.session_state.op_name,
+    "ev_data": str(st.session_state.ev_data),
+    "ev_tipo": st.session_state.ev_tipo,
+    "ev_nome": st.session_state.ev_nome,
+    "ev_desc": st.session_state.ev_desc,
+    "BASE_URL": st.session_state.get("BASE_URL", ""),
+}
 
-# ---- SCARICA BACKUP ----
-with c1:
-    backup_json = json.dumps(
-        {
-            "timestamp": datetime.now().isoformat(),
-            "squadre": st.session_state.get("squadre", [])
-        },
-        indent=2
-    )
+c_b1, c_b2 = st.columns(2)
 
+with c_b1:
     st.download_button(
         label="📦⬇️",
-        data=backup_json,
-        file_name="backup_squadre.json",
+        data=json.dumps(payload_now, ensure_ascii=False, indent=2).encode("utf-8"),
+        file_name="backup_radio_manager.json",
         mime="application/json",
-        help="Scarica backup JSON"
+        help="Scarica backup JSON",
+        use_container_width=True,
     )
 
-# ---- RIPRISTINA BACKUP ----
-with c2:
-    uploaded_file = st.file_uploader(
+with c_b2:
+    up = st.file_uploader(
         "📦⬆️",
         type=["json"],
         label_visibility="collapsed",
-        help="Ripristina backup JSON"
+        help="Carica un backup JSON per ripristinare",
+        key="backup_uploader",
     )
 
-    if uploaded_file is not None:
-        try:
-            dati = json.load(uploaded_file)
-            if "squadre" in dati:
-                st.session_state.squadre = dati["squadre"]
-                st.success("Backup ripristinato correttamente")
-                st.rerun()
-            else:
-                st.error("File di backup non valido")
-        except Exception:
-            st.error("Errore nel file JSON")
-
-
+if up is not None:
+    try:
+        load_data_from_uploaded_json(up.read())
+        st.success("✅ Backup ripristinato.")
+        st.rerun()
+    except Exception:
+        st.error("❌ File di backup non valido o corrotto.")
 # =========================
 # HEADER
 # =========================

@@ -37,6 +37,46 @@ COLORI_STATI = {
     "Rientrata al Coc": {"color": "green", "hex": "#81c784"},
 }
 
+# Colori fissi per SQUADRA (usati sia nei pallini in sidebar che nei marker in mappa)
+# (cicla se le squadre sono più della palette)
+COLORI_SQUADRE = [
+    "#e53935",  # rosso
+    "#1e88e5",  # blu
+    "#43a047",  # verde
+    "#fb8c00",  # arancio
+    "#8e24aa",  # viola
+    "#00897b",  # teal
+    "#6d4c41",  # marrone
+    "#546e7a",  # blu-grigio
+    "#c0ca33",  # lime
+    "#f4511e",  # arancio scuro
+]
+
+def _pick_next_team_color(used_hex: set) -> str:
+    for hx in COLORI_SQUADRE:
+        if hx not in used_hex:
+            return hx
+    return COLORI_SQUADRE[len(used_hex) % len(COLORI_SQUADRE)]
+
+def ensure_team_colors() -> None:
+    """Assicura che ogni squadra abbia un colore fisso ('mhex')."""
+    used = set()
+    for _name, info in st.session_state.squadre.items():
+        hx = (info.get("mhex") or "").strip()
+        if hx.startswith("#") and len(hx) == 7:
+            used.add(hx)
+    for name in sorted(st.session_state.squadre.keys()):
+        info = st.session_state.squadre[name]
+        hx = (info.get("mhex") or "").strip()
+        if not (hx.startswith("#") and len(hx) == 7):
+            info["mhex"] = _pick_next_team_color(used)
+            used.add(info["mhex"])
+
+def team_hex(team: str) -> str:
+    info = st.session_state.squadre.get(team, {}) if hasattr(st.session_state, "squadre") else {}
+    hx = (info.get("mhex") or "").strip()
+    return hx if (hx.startswith("#") and len(hx) == 7) else "#1e88e5"
+
 
 # =========================
 # NATO – Spelling radio
@@ -122,19 +162,26 @@ def build_folium_map_from_df(df: pd.DataFrame, center: list, zoom: int = 13) -> 
     if not df.empty:
         for _, row in df.iterrows():
             pos = row.get("pos")
-            sq = row.get("sq")
-            stt = row.get("st")
-            if isinstance(pos, list) and len(pos) == 2:
+            sq = (row.get("sq") or "").strip()
+            stt = (row.get("st") or "").strip()
+            if isinstance(pos, list) and len(pos) == 2 and sq:
                 ultime_pos[sq] = {"pos": pos, "st": stt}
 
     for sq, info in ultime_pos.items():
-        stt = info["st"]
-        folium.Marker(
-            info["pos"],
-            tooltip=f"{sq}: {stt}",
-            icon=folium.Icon(color=COLORI_STATI.get(stt, {}).get("color", "blue")),
+        stt = info["st"] or ""
+        hx = team_hex(sq)
+        folium.CircleMarker(
+            location=info["pos"],
+            radius=8,
+            color=hx,
+            weight=3,
+            fill=True,
+            fill_color=hx,
+            fill_opacity=1.0,
+            tooltip=f"{sq}: {stt}" if stt else sq,
         ).add_to(m)
     return m
+
 
 def df_for_report(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
@@ -1040,6 +1087,45 @@ section[data-testid="stSidebar"] .stDownloadButton > button{
 .nato-word{font-size:.70rem;font-weight:850;color:#334155;}
 @media print{.nato-title,.nato-mini,.nato-spell{display:none!important;}}
 
+
+/* Expander: sostituisce la freccia con + / - (visibile anche su sfondi scuri) */
+div[data-testid="stExpander"] [data-testid="stExpanderToggleIcon"]{
+  display: none !important;   /* nasconde la freccia originale */
+}
+div[data-testid="stExpander"] summary{
+  position: relative !important;
+  padding-left: 1.8rem !important; /* spazio per + / - */
+}
+div[data-testid="stExpander"] summary::before{
+  content: "+" !important;
+  position: absolute !important;
+  left: .35rem !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+  color: #ffb300 !important;
+  font-weight: 950 !important;
+  font-size: 1.25rem !important;
+  line-height: 1 !important;
+}
+div[data-testid="stExpander"][open] summary::before{
+  content: "−" !important;
+}
+
+/* Sidebar: bottoni azione solo icone (stessa dimensione) */
+section[data-testid="stSidebar"] div[data-testid="stExpander"] button[kind="secondary"]{
+  width: 2.35rem !important;
+  height: 2.35rem !important;
+  padding: 0 !important;
+  border-radius: 12px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stExpander"] button[kind="secondary"] span{
+  font-size: 1.05rem !important;
+  line-height: 1 !important;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -1060,119 +1146,138 @@ with st.sidebar:
         st.markdown("## 👥 SQUADRE")
         st.caption(f"Totale: **{len(st.session_state.squadre)}**")
 
-        # --- Lista compatta (niente cerca squadre) ---
         squadre_sorted = sorted(list(st.session_state.squadre.keys()))
+
+        # pulizia selezioni se una squadra viene rinominata/eliminata
+        if st.session_state.get("team_open") and st.session_state.team_open not in st.session_state.squadre:
+            st.session_state.team_open = None
+        if st.session_state.get("team_edit_open") and st.session_state.team_edit_open not in st.session_state.squadre:
+            st.session_state.team_edit_open = None
+        if st.session_state.get("team_qr_open") and st.session_state.team_qr_open not in st.session_state.squadre:
+            st.session_state.team_qr_open = None
+
         for team in squadre_sorted:
             inf = get_squadra_info(team)
-            stato_hex = COLORI_STATI.get(inf["stato"], {}).get("hex", "#e2e8f0")
+            hx = team_hex(team)
             capo_txt = inf["capo"] if inf["capo"] else "—"
             tel_txt = inf["tel"] if inf["tel"] else "—"
 
-            c0, c1, c2 = st.columns([0.18, 1, 0.60])
-            c0.markdown(
-                f"<div class='pc-sqdot' style='background:{stato_hex};'></div>",
-                unsafe_allow_html=True,
-            )
-            c1.markdown(
-                f"<div class='pc-sqrow'><div class='pc-sqname'>{team}</div>"
-                f"<div class='pc-sqsub'>👤 {capo_txt} · 📞 {tel_txt}</div></div>",
-                unsafe_allow_html=True,
-            )
-            b_edit, b_qr = c2.columns(2)
-            if b_edit.button("✏️", key=f"btn_edit_{team}"):
-                st.session_state.team_edit_open = team
-                st.session_state.team_qr_open = None
-                st.rerun()
-            if b_qr.button("📱", key=f"btn_qr_{team}"):
-                st.session_state.team_qr_open = team
-                st.session_state.team_edit_open = None
-                st.rerun()
-
-        # --- Modulo gestione (pulito e centralizzato) ---
-        st.divider()
-        st.markdown("## 🧰 Gestione squadra")
-
-        # se non c'è una selezione attiva, usa la prima
-        if st.session_state.get("team_edit_open") not in st.session_state.squadre and st.session_state.squadre:
-            st.session_state.team_edit_open = sorted(list(st.session_state.squadre.keys()))[0]
-
-        team_sel = st.selectbox(
-            "Seleziona squadra",
-            options=sorted(list(st.session_state.squadre.keys())),
-            index=sorted(list(st.session_state.squadre.keys())).index(st.session_state.team_edit_open)
-            if st.session_state.get("team_edit_open") in st.session_state.squadre
-            else 0,
-            key="team_manage_sel",
-        )
-        st.session_state.team_edit_open = team_sel
-        inf = get_squadra_info(team_sel)
-        st.markdown(chip_stato(inf["stato"]), unsafe_allow_html=True)
-
-        with st.form("form_team_manage"):
-            new_name = st.text_input("Nome squadra", value=team_sel, help="Il nome viene salvato in MAIUSCOLO")
-            new_capo = st.text_input("Caposquadra", value=inf["capo"], placeholder="Es. Rossi Mario")
-            new_tel = st.text_input("Telefono", value=inf["tel"], placeholder="Es. 3331234567")
-            s1, s2 = st.columns(2)
-            save = s1.form_submit_button("💾 Salva")
-            open_qr = s2.form_submit_button("📱 Apri QR")
-
-        if save:
-            ok, msg = update_team(team_sel, new_name, new_capo, new_tel)
-            (st.success if ok else st.warning)(msg)
-            if ok:
-                # allinea selezione su nuovo nome
-                st.session_state.team_edit_open = (new_name or "").strip().upper()
-                st.session_state.team_qr_open = None
-                st.rerun()
-
-        if open_qr:
-            st.session_state.team_qr_open = team_sel
-            st.rerun()
-
-        st.caption("Se il QR è stato condiviso per errore, rigenera il token.")
-        ctk1, ctk2 = st.columns(2)
-        if ctk1.button("♻️ Rigenera token", key="regen_token_manage"):
-            regenerate_team_token(team_sel)
-            st.success("Token rigenerato ✅")
-            st.session_state.team_qr_open = team_sel
-            st.rerun()
-
-        if ctk2.button("🗑️ Elimina", key="delete_team_manage"):
-            st.session_state["_del_arm"] = team_sel
-
-        if st.session_state.get("_del_arm") == team_sel:
-            st.warning("Conferma eliminazione: questa azione è irreversibile.")
-            conf = st.checkbox("Confermo eliminazione squadra", key="confdel_manage")
-            if st.button("✅ Conferma elimina", disabled=not conf, key="confirm_delete_manage"):
-                ok, msg = delete_team(team_sel)
-                (st.success if ok else st.warning)(msg)
-                st.session_state["_del_arm"] = None
-                st.rerun()
-            if st.button("❌ Annulla", key="cancel_delete_manage"):
-                st.session_state["_del_arm"] = None
-                st.rerun()
-
-        if st.session_state.get("team_qr_open") == team_sel:
-            st.divider()
-            st.markdown("### 📱 QR accesso caposquadra")
-
-            base_url = (st.session_state.get("BASE_URL") or "").strip().rstrip("/")
-            token = st.session_state.squadre[team_sel].get("token", "")
-
-            if not base_url.startswith("http"):
-                st.warning("⚠️ Imposta l'URL base: https://…streamlit.app")
-            else:
-                link = f"{base_url}/?mode=campo&team={team_sel}&token={token}"
-                st.code(link, language="text")
-                png = qr_png_bytes(link)
-                st.image(png, width=230)
-                st.download_button(
-                    "⬇️ Scarica QR (PNG)",
-                    data=png,
-                    file_name=f"QR_{team_sel.replace(' ', '_')}.png",
-                    mime="image/png",
-                    key=f"dlqr_{team_sel}",
+            exp_open = (st.session_state.get("team_open") == team)
+            with st.expander(f"●  {team}", expanded=exp_open):
+                st.markdown(
+                    f"<div style='display:flex;align-items:center;gap:10px;'>"
+                    f"<div class='pc-sqdot' style='background:{hx};margin-top:0;'></div>"
+                    f"<div style='flex:1;'>"
+                    f"<div class='pc-sqname' style='font-size:1.02rem'>{team}</div>"
+                    f"<div class='pc-sqsub'>👤 {capo_txt} · 📞 {tel_txt}</div>"
+                    f"</div></div>",
+                    unsafe_allow_html=True,
                 )
+
+                
+                # Riga comandi (chip a sinistra + icone a destra)
+                r1, r2, r3, r4, r5 = st.columns([6, 1, 1, 1, 1])
+
+                with r1:
+                    st.markdown(chip_stato(inf["stato"]), unsafe_allow_html=True)
+
+                # ✏️ Modifica (apre form sotto il nome)
+                if r2.button("✏️", key=f"open_edit_{team}", help="Modifica squadra", type="secondary"):
+                    st.session_state.team_open = team
+                    st.session_state.team_edit_open = team
+                    st.session_state.team_qr_open = None
+                    st.session_state["_del_arm"] = None
+                    st.rerun()
+
+                # 📱 QR
+                if r3.button("📱", key=f"open_qr_{team}", help="Mostra QR", type="secondary"):
+                    st.session_state.team_open = team
+                    st.session_state.team_qr_open = team
+                    st.session_state.team_edit_open = None
+                    st.session_state["_del_arm"] = None
+                    st.rerun()
+
+                # ♻️ Token
+                if r4.button("♻️", key=f"regen_tok_{team}", help="Rigenera token", type="secondary"):
+                    regenerate_team_token(team)
+                    st.session_state.team_open = team
+                    st.session_state.team_qr_open = team
+                    st.session_state.team_edit_open = None
+                    st.success("Token rigenerato ✅")
+                    st.rerun()
+
+                # 🗑️ Elimina (arm)
+                if r5.button("🗑️", key=f"del_{team}", help="Elimina squadra", type="secondary"):
+                    st.session_state.team_open = team
+                    st.session_state["_del_arm"] = team
+                    st.session_state.team_edit_open = None
+                    st.session_state.team_qr_open = None
+                    st.rerun()
+                # --- Modifica sotto il nome (solo se aperta) ---
+                if st.session_state.get("team_edit_open") == team:
+                    st.divider()
+                    st.markdown("### ✏️ Modifica squadra")
+
+                    with st.form(f"form_edit_{team}"):
+                        new_name = st.text_input("Nome squadra", value=team, help="Il nome viene salvato in MAIUSCOLO")
+                        new_capo = st.text_input("Caposquadra", value=inf["capo"], placeholder="Es. Rossi Mario")
+                        new_tel = st.text_input("Telefono", value=inf["tel"], placeholder="Es. 3331234567")
+                        cA, cB = st.columns(2)
+                        save = cA.form_submit_button("💾 Salva")
+                        close = cB.form_submit_button("✅ Chiudi")
+
+                    if save:
+                        ok, msg = update_team(team, new_name, new_capo, new_tel)
+                        (st.success if ok else st.warning)(msg)
+                        if ok:
+                            new_t = (new_name or "").strip().upper()
+                            st.session_state.team_open = new_t
+                            st.session_state.team_edit_open = None
+                            st.session_state.team_qr_open = None
+                            st.rerun()
+
+                    if close:
+                        st.session_state.team_edit_open = None
+                        st.rerun()
+
+                # --- QR sotto il nome (solo se aperto) ---
+                if st.session_state.get("team_qr_open") == team:
+                    st.divider()
+                    st.markdown("### 📱 QR accesso caposquadra")
+
+                    base_url = (st.session_state.get("BASE_URL") or "").strip().rstrip("/")
+                    token = st.session_state.squadre[team].get("token", "")
+
+                    if not base_url.startswith("http"):
+                        st.warning("⚠️ Imposta l'URL base: https://…streamlit.app")
+                    else:
+                        link = f"{base_url}/?mode=campo&team={team}&token={token}"
+                        st.code(link, language="text")
+                        png = qr_png_bytes(link)
+                        st.image(png, width=230)
+                        st.download_button(
+                            "⬇️ Scarica QR (PNG)",
+                            data=png,
+                            file_name=f"QR_{team.replace(' ', '_')}.png",
+                            mime="image/png",
+                            key=f"dlqr_{team}",
+                        )
+
+                # --- Conferma eliminazione (solo se armata) ---
+                if st.session_state.get("_del_arm") == team:
+                    st.divider()
+                    st.warning("Conferma eliminazione: questa azione è irreversibile.")
+                    conf = st.checkbox("Confermo eliminazione squadra", key=f"confdel_{team}")
+                    cD, cE = st.columns(2)
+                    if cD.button("✅ Conferma elimina", disabled=not conf, key=f"confirm_del_{team}"):
+                        ok, msg = delete_team(team)
+                        (st.success if ok else st.warning)(msg)
+                        st.session_state["_del_arm"] = None
+                        st.session_state.team_open = None
+                        st.rerun()
+                    if cE.button("❌ Annulla", key=f"cancel_del_{team}"):
+                        st.session_state["_del_arm"] = None
+                        st.rerun()
 
         st.divider()
         st.markdown("## ➕ CREA SQUADRA")
@@ -1189,19 +1294,28 @@ with st.sidebar:
                 st.warning("Esiste già una squadra con questo nome.")
             else:
                 token = uuid.uuid4().hex
+                used = {(inf.get("mhex") or "").strip() for inf in st.session_state.squadre.values()}
+                used = {hx for hx in used if hx.startswith("#") and len(hx) == 7}
+                colore = _pick_next_team_color(set(used))
+
                 st.session_state.squadre[nome] = {
                     "stato": "In attesa al COC",
                     "capo": (capo or "").strip(),
                     "tel": (tel or "").strip(),
                     "token": token,
+                    "mhex": colore,
                 }
                 save_data_to_disk()
+                # apri subito la scheda e mostra QR
+                st.session_state.team_open = nome
                 st.session_state.team_qr_open = nome
-                st.success("✅ Squadra creata! (QR aperto)")
+                st.session_state.team_edit_open = None
+                st.success("✅ Squadra creata! QR visibile sotto.")
                 st.rerun()
 
         st.divider()
         st.markdown("## 🌐 URL APP (per QR)")
+
         st.caption("Se hai streamlit-js-eval si compila da solo; altrimenti incolla l'URL.")
         st.session_state.BASE_URL = st.text_input(
             "Base URL Streamlit Cloud",

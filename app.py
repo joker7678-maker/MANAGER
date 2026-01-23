@@ -7,6 +7,7 @@ import os
 import base64
 import json
 import uuid
+import urllib.parse
 import qrcode
 from io import BytesIO
 from typing import Optional, Tuple, Dict, Any, List
@@ -1507,7 +1508,26 @@ with st.sidebar:
                         st.warning("⚠️ Imposta l'URL base: https://…streamlit.app")
                     else:
                         link = f"{base_url}/?mode=campo&team={team}&token={token}"
-                        st.code(link, language="text")
+
+                        # Link condivisibile (con pulsante copia integrato)
+                        st.text_input(
+                            "Link da copiare / inoltrare",
+                            value=link,
+                            key=f"sharelink_{team}",
+                        )
+
+                        # Link rapido WhatsApp (utile da PC o da telefono)
+                        wa_text = urllib.parse.quote(f"Link modulo caposquadra ({team}): {link}")
+                        st.markdown(
+                            f"<a href='https://wa.me/?text={wa_text}' target='_blank' "
+                            f"style='text-decoration:none;'>"
+                            f"<span style='display:inline-block;padding:.45rem .7rem;border-radius:10px;"
+                            f"border:1px solid #90caf9;background:#e3f2fd;color:#0d47a1;font-weight:600;'>"
+                            f"📲 Invia su WhatsApp</span></a>",
+                            unsafe_allow_html=True,
+                        )
+
+                        # QR
                         png = qr_png_bytes(link)
                         st.image(png, width=230)
                         st.download_button(

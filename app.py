@@ -7,6 +7,7 @@ import os
 import base64
 import json
 import uuid
+import urllib.parse
 import qrcode
 from io import BytesIO
 from typing import Optional, Tuple, Dict, Any, List
@@ -37,21 +38,45 @@ COLORI_STATI = {
     "Rientrata al Coc": {"color": "green", "hex": "#81c784"},
 }
 
-def status_dot_emoji(stato: str) -> str:
-    s = (stato or '').strip().lower()
-    # mapping semplice e molto visibile su mobile
-    if 'intervento in corso' in s:
-        return '🔴'
-    if 'in uscita' in s:
-        return '🟡'
-    if 'concluso' in s:
-        return '🟣'
-    if 'rientro' in s:
-        return '🟠'
-    if 'rientrata' in s:
-        return '🟢'
-    # default: al COC / attesa
-    return '⚪'
+# Colori fissi per SQUADRA (usati sia nei pallini in sidebar che nei marker in mappa)
+# (cicla se le squadre sono più della palette)
+COLORI_SQUADRE = [
+    "#e53935",  # rosso
+    "#1e88e5",  # blu
+    "#43a047",  # verde
+    "#fb8c00",  # arancio
+    "#8e24aa",  # viola
+    "#00897b",  # teal
+    "#6d4c41",  # marrone
+    "#546e7a",  # blu-grigio
+    "#c0ca33",  # lime
+    "#f4511e",  # arancio scuro
+]
+
+def _pick_next_team_color(used_hex: set) -> str:
+    for hx in COLORI_SQUADRE:
+        if hx not in used_hex:
+            return hx
+    return COLORI_SQUADRE[len(used_hex) % len(COLORI_SQUADRE)]
+
+def ensure_team_colors() -> None:
+    """Assicura che ogni squadra abbia un colore fisso ('mhex')."""
+    used = set()
+    for _name, info in st.session_state.squadre.items():
+        hx = (info.get("mhex") or "").strip()
+        if hx.startswith("#") and len(hx) == 7:
+            used.add(hx)
+    for name in sorted(st.session_state.squadre.keys()):
+        info = st.session_state.squadre[name]
+        hx = (info.get("mhex") or "").strip()
+        if not (hx.startswith("#") and len(hx) == 7):
+            info["mhex"] = _pick_next_team_color(used)
+            used.add(info["mhex"])
+
+def team_hex(team: str) -> str:
+    info = st.session_state.squadre.get(team, {}) if hasattr(st.session_state, "squadre") else {}
+    hx = (info.get("mhex") or "").strip()
+    return hx if (hx.startswith("#") and len(hx) == 7) else "#1e88e5"
 
 
 # =========================
@@ -132,25 +157,45 @@ def chip_call_flow(row: dict) -> str:
     a, b = call_flow_from_row(row)
     return f"<div class='pc-flow'>📞 <b>{a}</b> <span class='pc-arrow'>➜</span> 🎧 <b>{b}</b></div>"
 
-def build_folium_map_from_df(df: pd.DataFrame, center: list, zoom: int = 13) -> folium.Map:
+def build_folium_map_from_df(df: pd.DataFrame, center: list, zoom: int = 13, inbox: Optional[List[dict]] = None) -> folium.Map:
     m = folium.Map(location=center, zoom_start=zoom)
     ultime_pos = {}
     if not df.empty:
         for _, row in df.iterrows():
             pos = row.get("pos")
-            sq = row.get("sq")
-            stt = row.get("st")
-            if isinstance(pos, list) and len(pos) == 2:
+            sq = (row.get("sq") or "").strip()
+            stt = (row.get("st") or "").strip()
+            if isinstance(pos, list) and len(pos) == 2 and sq:
                 ultime_pos[sq] = {"pos": pos, "st": stt}
 
+
+    # Aggiunge anche le POSIZIONI PENDING (inbox) per visualizzarle subito in mappa
+    if inbox:
+        for mmsg in inbox:
+            try:
+                sqp = (mmsg.get("sq") or "").strip()
+                posp = mmsg.get("pos")
+                if isinstance(posp, list) and len(posp) == 2 and sqp:
+                    # le pending NON sovrascrivono una posizione già valida da brogliaccio
+                    ultime_pos.setdefault(sqp, {"pos": posp, "st": "📥 In attesa validazione"})
+            except Exception:
+                continue
+
     for sq, info in ultime_pos.items():
-        stt = info["st"]
-        folium.Marker(
-            info["pos"],
-            tooltip=f"{sq}: {stt}",
-            icon=folium.Icon(color=COLORI_STATI.get(stt, {}).get("color", "blue")),
+        stt = info["st"] or ""
+        hx = team_hex(sq)
+        folium.CircleMarker(
+            location=info["pos"],
+            radius=8,
+            color=hx,
+            weight=3,
+            fill=True,
+            fill_color=hx,
+            fill_opacity=1.0,
+            tooltip=f"{sq}: {stt}" if stt else sq,
         ).add_to(m)
     return m
+
 
 def df_for_report(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
@@ -500,7 +545,7 @@ def make_html_report_bytes(
   .wrap {{ max-width: 1200px; margin: 18px auto; padding: 0 14px; }}
   .top {{
     background: linear-gradient(135deg, var(--pri), #0b1f3a);
-    color: white; border-radius: 10px; padding: 16px 18px;
+    color: white; border-radius: 16px; padding: 16px 18px;
     box-shadow: 0 10px 28px rgba(2,6,23,.12);
   }}
   .title {{ font-size: 22px; font-weight: 900; letter-spacing:.5px; text-transform: uppercase; }}
@@ -513,11 +558,11 @@ def make_html_report_bytes(
   }}
   label {{ font-weight: 900; }}
   select {{
-    padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(15,23,42,.2);
+    padding: 10px 12px; border-radius: 12px; border: 1px solid rgba(15,23,42,.2);
     font-weight: 800; min-width: 240px;
   }}
   .btn {{
-    padding: 10px 14px; border-radius: 10px; border: 1px solid rgba(255,255,255,.22);
+    padding: 10px 14px; border-radius: 12px; border: 1px solid rgba(255,255,255,.22);
     background: #111827; color: white; font-weight: 900; cursor: pointer;
   }}
   .btn.secondary {{ background: #334155; }}
@@ -525,7 +570,7 @@ def make_html_report_bytes(
     display:flex; align-items:center; gap:10px;
     background: rgba(255,255,255,.10);
     border: 1px solid rgba(255,255,255,.18);
-    padding: 10px 12px; border-radius: 10px;
+    padding: 10px 12px; border-radius: 12px;
     font-weight: 900;
   }}
   .toggle input[type="checkbox"] {{
@@ -535,7 +580,7 @@ def make_html_report_bytes(
 
   .rep {{
     margin-top: 14px; background: var(--card);
-    border: 1px solid var(--border); border-radius: 10px;
+    border: 1px solid var(--border); border-radius: 16px;
     padding: 16px; box-shadow: 0 8px 22px rgba(2,6,23,.08);
     display:none;
   }}
@@ -553,7 +598,7 @@ def make_html_report_bytes(
     display:flex; gap:10px; align-items:center; flex-wrap:wrap;
     background: #f1f5f9;
     border: 1px solid rgba(15,23,42,.10);
-    border-radius: 10px;
+    border-radius: 12px;
     padding: 10px 12px;
     margin-bottom: 10px;
   }}
@@ -733,6 +778,7 @@ def default_state_payload():
         "ev_nome": "",
         "ev_desc": "",
         "BASE_URL": "",
+        "cnt_conclusi": 0,
     }
 
 def save_data_to_disk():
@@ -747,6 +793,7 @@ def save_data_to_disk():
         "ev_nome": st.session_state.ev_nome,
         "ev_desc": st.session_state.ev_desc,
         "BASE_URL": st.session_state.get("BASE_URL", ""),
+        "cnt_conclusi": st.session_state.get("cnt_conclusi", 0),
     }
     with open(DATA_PATH, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
@@ -770,6 +817,8 @@ def load_data_from_disk():
     st.session_state.ev_nome = payload.get("ev_nome", "")
     st.session_state.ev_desc = payload.get("ev_desc", "")
     st.session_state.BASE_URL = payload.get("BASE_URL", "") or ""
+    st.session_state.cnt_conclusi = int(payload.get("cnt_conclusi", 0) or 0)
+    ensure_inbox_ids()
     return True
 
 def load_data_from_uploaded_json(file_bytes: bytes):
@@ -784,8 +833,25 @@ def load_data_from_uploaded_json(file_bytes: bytes):
     st.session_state.ev_nome = payload.get("ev_nome", "")
     st.session_state.ev_desc = payload.get("ev_desc", "")
     st.session_state.BASE_URL = payload.get("BASE_URL", "") or ""
+    st.session_state.cnt_conclusi = int(payload.get("cnt_conclusi", 0) or 0)
     save_data_to_disk()
+    ensure_inbox_ids()
 
+
+
+def ensure_inbox_ids() -> None:
+    """Assicura che ogni messaggio in inbox abbia un id stabile (evita bug widget/rerun)."""
+    inbox = st.session_state.get("inbox", [])
+    changed = False
+    if isinstance(inbox, list):
+        for m in inbox:
+            if isinstance(m, dict):
+                if not m.get("id"):
+                    m["id"] = uuid.uuid4().hex
+                    changed = True
+    if changed:
+        # non forziamo save qui sempre: lo farà chi chiama, ma teniamo consistenza
+        pass
 # =========================
 # INIT STATE
 # =========================
@@ -796,10 +862,15 @@ if "initialized" not in st.session_state:
     st.session_state.team_qr_open = None
 
     ok = load_data_from_disk()
+    ensure_inbox_ids()
+    # inizializza contatore conclusi se mancante (deriva dal brogliaccio)
+    if "cnt_conclusi" not in st.session_state or st.session_state.cnt_conclusi is None:
+        st.session_state.cnt_conclusi = sum(1 for r in st.session_state.get("brogliaccio", []) if r.get("st") == "Intervento concluso")
     if not ok:
         d = default_state_payload()
         st.session_state.brogliaccio = d["brogliaccio"]
         st.session_state.inbox = d["inbox"]
+        ensure_inbox_ids()
         st.session_state.squadre = d["squadre"]
         st.session_state.pos_mappa = d["pos_mappa"]
         st.session_state.op_name = d["op_name"]
@@ -807,6 +878,7 @@ if "initialized" not in st.session_state:
         st.session_state.ev_tipo = d["ev_tipo"]
         st.session_state.ev_nome = d["ev_nome"]
         st.session_state.ev_desc = d["ev_desc"]
+        st.session_state.cnt_conclusi = 0
         st.session_state.BASE_URL = d["BASE_URL"]
         save_data_to_disk()
 
@@ -814,6 +886,21 @@ if "initialized" not in st.session_state:
 for _, info in st.session_state.squadre.items():
     if "token" not in info or not info["token"]:
         info["token"] = uuid.uuid4().hex
+
+
+# =========================
+# SYNC MULTI-SESSION (Caposquadra -> Console)
+# =========================
+# Se un caposquadra invia dal proprio link QR, scrive su DATA_PATH.
+# La console vede i nuovi dati al prossimo rerun: qui forziamo un reload quando il file cambia.
+if not st.session_state.get("field_ok"):
+    try:
+        _mtime = os.path.getmtime(DATA_PATH) if os.path.exists(DATA_PATH) else None
+        if _mtime and st.session_state.get("_data_mtime") != _mtime:
+            load_data_from_disk()
+            st.session_state._data_mtime = _mtime
+    except Exception:
+        pass
 
 # =========================
 # AUTO BASE URL (opzionale: streamlit-js-eval)
@@ -828,6 +915,46 @@ try:
 except Exception:
     pass
 
+
+
+# =========================
+# GEOLOCATION (CAPOSQUADRA)
+# =========================
+def _extract_latlon(geo: Any) -> Optional[List[float]]:
+    """Accetta vari formati (streamlit-js-eval) e ritorna [lat, lon] oppure None."""
+    if not isinstance(geo, dict):
+        return None
+
+    # Formato A: {"latitude": .., "longitude": ..}
+    lat = geo.get("latitude")
+    lon = geo.get("longitude")
+    if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
+        return [float(lat), float(lon)]
+
+    # Formato B: {"coords": {"latitude":.., "longitude":..}}
+    coords = geo.get("coords")
+    if isinstance(coords, dict):
+        lat = coords.get("latitude")
+        lon = coords.get("longitude")
+        if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
+            return [float(lat), float(lon)]
+
+    # Formato C: {"lat":.., "lng":..} / {"lon":..}
+    lat = geo.get("lat")
+    lon = geo.get("lng") if "lng" in geo else geo.get("lon")
+    if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
+        return [float(lat), float(lon)]
+
+    return None
+
+def get_phone_gps_once() -> Optional[List[float]]:
+    """Prova a leggere il GPS dal browser (telefono). Richiede streamlit-js-eval."""
+    try:
+        from streamlit_js_eval import get_geolocation  # type: ignore
+        geo = get_geolocation()
+        return _extract_latlon(geo)
+    except Exception:
+        return None
 save_data_to_disk()
 
 # =========================
@@ -940,35 +1067,6 @@ require_login()
 # =========================
 st.markdown("""
 <style>
-/* ===== VISIBILITÀ BOTTONI (anche in modalità scura smartphone) ===== */
-div.stButton > button,
-div[data-testid="stFormSubmitButton"] > button{
-  background: linear-gradient(180deg, #1d4ed8 0%, #0b1f3a 100%) !important;
-  color: #ffffff !important;
-  border: 1px solid rgba(255,255,255,.22) !important;
-  border-radius: 14px !important;
-  font-weight: 950 !important;
-}
-div.stButton > button:hover,
-div[data-testid="stFormSubmitButton"] > button:hover{
-  filter: brightness(1.06) !important;
-}
-div.stDownloadButton > button{
-  background: linear-gradient(180deg, #fde68a 0%, #fbbf24 100%) !important;
-  color: #0b1220 !important;
-  border: 1px solid rgba(15,23,42,.18) !important;
-  border-radius: 14px !important;
-  font-weight: 950 !important;
-}
-@media (max-width: 640px){
-  div.stButton > button,
-  div[data-testid="stFormSubmitButton"] > button,
-  div.stDownloadButton > button{
-    padding: 0.9rem 1rem !important;
-    font-size: 1.05rem !important;
-  }
-}
-
 header[data-testid="stHeader"] { background: transparent; border:none; }
 .stApp { background: linear-gradient(180deg,#e9eef3 0%, #dfe7ee 100%); color:#0b1220; }
 .block-container { padding-top: 1.2rem; padding-bottom: 2rem; }
@@ -985,12 +1083,12 @@ header[data-testid="stHeader"] { background: transparent; border:none; }
 .pc-hero-left{ display:flex; align-items:center; gap:14px; }
 .pc-hero .title{ font-size: 2.05rem; font-weight: 900; text-transform: uppercase; margin:0; letter-spacing: 1px; }
 .pc-hero .subtitle{ margin: 2px 0 0 0; opacity:.85; font-size: 1rem; }
-.pc-logo{ width: 64px; height: 64px; border-radius: 10px; background: rgba(255,255,255,.12);
+.pc-logo{ width: 64px; height: 64px; border-radius: 16px; background: rgba(255,255,255,.12);
   border: 1px solid rgba(255,255,255,.22); padding: 6px; object-fit: contain; }
 .pc-badge{ background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.22);
   padding: 10px 14px; border-radius: 999px; font-weight: 800; white-space: nowrap; }
 .pc-card{ background: #fff; border: 1px solid rgba(15,23,42,.15);
-  border-radius: 10px; padding: 18px; box-shadow: 0 8px 22px rgba(2,6,23,.08); margin-bottom: 14px; }
+  border-radius: 16px; padding: 18px; box-shadow: 0 8px 22px rgba(2,6,23,.08); margin-bottom: 14px; }
 .pc-chip{ display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border-radius:999px;
   font-weight:900; font-size:.85rem; border:1px solid rgba(15,23,42,.12); line-height:1; }
 .pc-dot{ width:10px; height:10px; border-radius:999px; background: rgba(255,255,255,.85); border:1px solid rgba(15,23,42,.15); }
@@ -1006,7 +1104,7 @@ header[data-testid="stHeader"] { background: transparent; border:none; }
   box-shadow: 0 8px 18px rgba(2,6,23,.08);
 }
 .pc-arrow{ margin: 0 10px; opacity: .9; }
-.pc-metric-color{ border-radius: 10px; padding: 14px; border: 1px solid rgba(15,23,42,.12); box-shadow: 0 8px 22px rgba(2,6,23,.10); }
+.pc-metric-color{ border-radius: 16px; padding: 14px; border: 1px solid rgba(15,23,42,.12); box-shadow: 0 8px 22px rgba(2,6,23,.10); }
 .pc-metric-color .k{ font-size:.85rem; font-weight: 900; text-transform: uppercase; letter-spacing: .8px; opacity: .95; }
 .pc-metric-color .v{ font-size: 2.1rem; font-weight: 950; margin-top: 2px; }
 .pc-alert{ background: linear-gradient(135deg, #ff4d4d 0%, #ff7a59 100%);
@@ -1038,6 +1136,35 @@ section[data-testid="stSidebar"] textarea{
   border-radius: 12px !important;
   font-weight: 800 !important;
 }
+
+/* File uploader (sidebar): nasconde la scheda "Drag and drop..." e rende il box compatto */
+section[data-testid="stSidebar"] div[data-testid="stFileUploaderDropzoneInstructions"],
+section[data-testid="stSidebar"] div[data-testid="stFileUploaderDropzoneInstructions"] *{
+  display: none !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stFileUploaderDropzone"]{
+  padding: .35rem .45rem !important;
+  min-height: 48px !important;
+  border-radius: 12px !important;
+  background: rgba(255,255,255,.10) !important;
+  border: 1px solid rgba(255,255,255,.22) !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stFileUploaderDropzone"]:hover{
+  border-color: rgba(255,255,255,.35) !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stFileUploaderDropzone"] button{
+  padding: .35rem .6rem !important;
+  border-radius: 10px !important;
+  font-weight: 950 !important;
+}
+
+/* Bottone del file-uploader: solo icona (contraria al download) */
+section[data-testid="stSidebar"] div[data-testid="stFileUploaderDropzone"] button span{ display:none !important; }
+section[data-testid="stSidebar"] div[data-testid="stFileUploaderDropzone"] button::before{
+  content: "📦⬆️";
+  font-size: 1.15rem;
+  line-height: 1;
+}
 section[data-testid="stSidebar"] div[data-baseweb="select"] > div{
   background: #ffffff !important;
   border: 1px solid rgba(15,23,42,.22) !important;
@@ -1065,34 +1192,17 @@ section[data-testid="stSidebar"] .stDownloadButton > button{
   font-weight: 950 !important;
 }
 
-/* Sidebar: expander "scheda" chiara (leggibile anche su sidebar scura) */
-section[data-testid="stSidebar"] details[data-testid="stExpander"]{
-  border: 1px solid rgba(15,23,42,.18) !important;
-  border-radius: 14px !important;
-  background: #ffffff !important;
-  overflow: hidden !important;
-  box-shadow: 0 8px 18px rgba(2,6,23,.10) !important;
+/* Sidebar — lista squadre compatta */
+.pc-sqdot{
+  width: 12px; height: 12px;
+  border-radius: 999px;
+  margin-top: 10px;
+  border: 1px solid rgba(255,255,255,.35);
+  box-shadow: 0 6px 14px rgba(2,6,23,.18);
 }
-section[data-testid="stSidebar"] details[data-testid="stExpander"] > summary{
-  padding: 10px 12px !important;
-  border-radius: 14px !important;
-  background: #f1f5f9 !important;
-  color: #0b1220 !important;
-  font-weight: 950 !important;
-}
-section[data-testid="stSidebar"] details[data-testid="stExpander"] > summary:hover{
-  background: #e2e8f0 !important;
-}
-section[data-testid="stSidebar"] details[data-testid="stExpander"] > summary svg,
-section[data-testid="stSidebar"] [data-testid="stExpanderToggleIcon"],
-section[data-testid="stSidebar"] [data-testid="stExpanderToggleIcon"] svg{
-  color: #0b1220 !important;
-  fill: #0b1220 !important;
-  opacity: 1 !important;
-}
-section[data-testid="stSidebar"] details[data-testid="stExpander"] div[data-testid="stMarkdownContainer"] p{
-  color: #0b1220 !important;
-}
+.pc-sqrow{ line-height: 1.1; padding: 2px 0; }
+.pc-sqname{ font-weight: 950; color: #f8fafc; font-size: .95rem; }
+.pc-sqsub{ font-weight: 800; color: rgba(248,250,252,.92); font-size: .74rem; margin-top: 2px; }
 
 /* NATO mini (solo sala radio) */
 .nato-title{margin-top:10px;font-weight:950;color:#0d47a1;font-size:.9rem;}
@@ -1103,187 +1213,173 @@ section[data-testid="stSidebar"] details[data-testid="stExpander"] div[data-test
 @media print{.nato-title,.nato-mini,.nato-spell{display:none!important;}}
 
 
-/* ====== MOBILE / SMARTPHONE OPTIMIZATION ====== */
-@media (max-width: 768px){
-  .pc-hero{ margin-top: -20px; padding: 10px 12px; flex-direction: column; align-items: flex-start; }
-  .pc-hero .title{ font-size: 1.55rem; }
-  .pc-hero .subtitle{ font-size: .95rem; }
-  .pc-logo{ width: 54px; height: 54px; border-radius: 14px; }
-  .pc-badge{ width: 100%; text-align:center; }
-  .pc-card{ padding: 14px; border-radius: 10px; }
+/* Expander: sostituisce la freccia con + / - e nasconde la freccia originale (anche se cambia DOM) */
+div[data-testid="stExpander"] [data-testid="stExpanderToggleIcon"],
+div[data-testid="stExpander"] summary svg,
+div[data-testid="stExpander"] summary [data-testid="stExpanderToggleIcon"],
+div[data-testid="stExpander"] summary span[aria-hidden="true"]{
+  display: none !important;   /* nasconde la freccia originale */
 }
 
-/* ====== CAPOSQUADRA (SMARTPHONE) ====== */
-.capo-mode .pc-card{
-  border-radius: 18px;
-  border: 1px solid rgba(15,23,42,.14);
-  box-shadow: 0 10px 26px rgba(2,6,23,.08);
+/* Header expander in sidebar: NON deve diventare bianco quando aperto */
+section[data-testid="stSidebar"] div[data-testid="stExpander"] summary{
+  background: linear-gradient(180deg, rgba(30,41,59,.55), rgba(15,23,42,.35)) !important;
+  border: 1px solid rgba(255,255,255,.10) !important;
+  border-radius: 16px !important;
 }
-.capo-mode .stButton > button{
-  width: 100% !important;
-  border-radius: 14px !important;
-  padding: 14px 14px !important;
+section[data-testid="stSidebar"] div[data-testid="stExpander"][open] summary{
+  background: linear-gradient(180deg, rgba(30,41,59,.60), rgba(15,23,42,.40)) !important;
+  border-color: rgba(255,255,255,.14) !important;
+}
+
+div[data-testid="stExpander"] summary{
+  position: relative !important;
+  padding-left: 2.1rem !important; /* spazio per + / - */
+}
+div[data-testid="stExpander"] summary::before{
+  content: "+" !important;
+  position: absolute !important;
+  left: .55rem !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+  color: #ffb300 !important;
   font-weight: 950 !important;
-  border: 1px solid rgba(15,23,42,.14) !important;
-  /* Visibile anche in modalità scura (telefono) */
-  background: linear-gradient(180deg, #fde68a 0%, #fbbf24 100%) !important;
-  color: #0b1220 !important;
+  font-size: 1.35rem !important;
+  line-height: 1 !important;
 }
-.capo-mode .stButton > button:hover{ filter: brightness(0.98); }
-.capo-mode textarea, .capo-mode input{
-  font-size: 16px !important; /* evita zoom iOS */
-}
-.capo-mode [data-testid="stCheckbox"] label{
-  font-weight: 900 !important;
-}
-.pc-inbox .pc-alert{ margin-bottom: 8px; }
-
-
-/* ✅ Sidebar: lista squadre in schede chiare (leggibile su tema scuro) */
-section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"]{
-  background: transparent !important;
-  border: none !important;
+div[data-testid="stExpander"][open] summary::before{
+  content: "−" !important;
 }
 
-/* Card (contenitore) in blu molto chiaro */
-section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"] > details{
-  background: #eaf2ff !important; /* blu chiaro */
-  border: 1px solid rgba(15,23,42,.16) !important;
+/* Download QR: bottone più largo/alto e solo icone */
+section[data-testid="stSidebar"] div[data-testid="stDownloadButton"] button{
+  width: 2.75rem !important;
+  height: 2.75rem !important;
+  padding: 0 !important;
   border-radius: 14px !important;
-  margin: 10px 0 !important;
-  overflow: hidden !important;
-  box-shadow: 0 10px 22px rgba(2,6,23,.12) !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stDownloadButton"] button span{
+  font-size: 1.15rem !important;
+  line-height: 1 !important;
 }
 
-/* Barra titolo: blu (per leggere bene freccia bianca) */
-section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"] > details > summary{
-  background: linear-gradient(180deg, #2b6de6 0%, #1f58c8 100%) !important;
-  color: #ffffff !important;
-  font-weight: 950 !important;
-  padding: 10px 12px !important;
-  border-bottom: 1px solid rgba(255,255,255,.18) !important;
-}
-
-/* forza colore testo nel titolo (Streamlit inserisce <p>/<span>) */
-section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"] > details > summary *{
-  color: #ffffff !important;
-  opacity: 1 !important;
-  filter: none !important;
-}
-
-/* Freccetta/chevron: bianca e ben visibile */
-section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"] > details > summary svg{
-  display: block !important;
-  color: #ffffff !important;
-}
-section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"] > details > summary svg *{
-  stroke: #ffffff !important;
-  fill: none !important;
-  opacity: 1 !important;
-}
-
-/* Corpo expander: sfondo ancora più chiaro, testo scuro */
-section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"] [data-testid="stExpanderDetails"]{
-  background: #f6f9ff !important;
-  color: #0b1220 !important;
-}
-section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"] [data-testid="stMarkdownContainer"] p,
-section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"] [data-testid="stMarkdownContainer"] li,
-section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"] label,
-section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"] [data-testid="stCaptionContainer"]{
-  color: #0b1220 !important;
-}
-
-/* Bottoni dentro le card squadre: chiari + testo scuro */
-section[data-testid="stSidebar"] .pc-squad-list .stButton > button{
-  background: linear-gradient(180deg, #fde68a 0%, #fbbf24 100%) !important;
-  color: #0b1220 !important;
-  border: 1px solid rgba(15,23,42,.18) !important;
+/* Sidebar: bottoni azione solo icone (stessa dimensione) */
+section[data-testid="stSidebar"] div[data-testid="stExpander"] button[kind="secondary"]{
+  width: 2.35rem !important;
+  height: 2.35rem !important;
+  padding: 0 !important;
   border-radius: 12px !important;
-  font-weight: 950 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
 }
-section[data-testid="stSidebar"] .pc-squad-list .stButton > button:hover{
-  filter: brightness(0.98);
-}
-section[data-testid="stSidebar"] .pc-squad-list hr{
-  border-color: rgba(15,23,42,.12) !important;
-}
-
-
-
-
-
-/* ===== FIX DEFINITIVO SIDEBAR SQUADRE (card chiara + testi scuri + freccia bianca) ===== */
-/* Nota: usiamo selettori "larghi" (non solo data-testid) perché Streamlit cambia spesso la struttura DOM */
-
-section[data-testid="stSidebar"] .pc-squad-list div[data-testid="stExpander"],
-section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpander"]{
-  background: transparent !important;
-  border: none !important;
+section[data-testid="stSidebar"] div[data-testid="stExpander"] button[kind="secondary"] span{
+  font-size: 1.05rem !important;
+  line-height: 1 !important;
 }
 
-/* Card (blu chiaro) applicata direttamente al <details> */
-section[data-testid="stSidebar"] .pc-squad-list details,
-section[data-testid="stSidebar"] .pc-squad-list details[data-testid="stExpander"]{
-  background: #e7f0ff !important;
-  border: 1px solid rgba(2,6,23,.10) !important;
-  border-radius: 18px !important;
-  box-shadow: 0 10px 24px rgba(2,6,23,.10) !important;
-  overflow: hidden !important;
-  margin: 10px 0 !important;
-}
 
-/* Titolo expander */
-section[data-testid="stSidebar"] .pc-squad-list details > summary{
-  background: #e7f0ff !important;
-  padding: 14px 14px !important;
-  color: #0b1220 !important;
-  font-weight: 950 !important;
-}
+/* ====== MOBILE: Modulo da campo leggibile anche in dark mode ====== */
+@media (max-width: 768px){
 
-/* TESTO nel summary: forzato scuro su tutti i figli */
-section[data-testid="stSidebar"] .pc-squad-list details > summary *,
-section[data-testid="stSidebar"] .pc-squad-list details > summary p,
-section[data-testid="stSidebar"] .pc-squad-list details > summary span{
-  color: #0b1220 !important;
-}
+  :root { color-scheme: light; }
 
-/* Chevron/Toggle: rendilo bianco e ben visibile */
-section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpanderToggleIcon"],
-section[data-testid="stSidebar"] .pc-squad-list div[data-testid="stExpanderToggleIcon"]{
-  background: rgba(13,71,161,.75) !important;
-  border-radius: 999px !important;
-  padding: 6px !important;
-  margin-right: 10px !important;
-}
-section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpanderToggleIcon"] svg,
-section[data-testid="stSidebar"] .pc-squad-list div[data-testid="stExpanderToggleIcon"] svg{
-  color: #ffffff !important;
-  fill: #ffffff !important;
-  stroke: #ffffff !important;
-}
+  /* sfondo generale chiaro */
+  .stApp{
+    background: #f5f7fa !important;
+    color: #0b1220 !important;
+  }
 
-/* Corpo expander: più chiaro e testo scuro */
-section[data-testid="stSidebar"] .pc-squad-list details > div,
-section[data-testid="stSidebar"] .pc-squad-list [data-testid="stExpanderDetails"]{
-  background: rgba(255,255,255,.55) !important;
-  padding: 10px 14px 14px 14px !important;
-}
-section[data-testid="stSidebar"] .pc-squad-list details div[data-testid="stMarkdownContainer"] p,
-section[data-testid="stSidebar"] .pc-squad-list details div[data-testid="stMarkdownContainer"] li,
-section[data-testid="stSidebar"] .pc-squad-list details label,
-section[data-testid="stSidebar"] .pc-squad-list details [data-testid="stCaptionContainer"]{
-  color: #0b1220 !important;
-}
+  /* card e contenitori */
+  .pc-card{
+    background: #ffffff !important;
+    border: 1px solid rgba(15,23,42,.14) !important;
+  }
 
-/* Bottoni dentro la lista squadre: chiari + testo scuro */
-section[data-testid="stSidebar"] .pc-squad-list .stButton > button{
-  background: #ffffff !important;
-  color: #0b1220 !important;
-  border: 1px solid rgba(2,6,23,.16) !important;
-}
-section[data-testid="stSidebar"] .pc-squad-list .stButton > button:hover{
-  filter: brightness(0.98) !important;
+  /* input / textarea: sempre chiari */
+  input, textarea{
+    background-color: #ffffff !important;
+    color: #0b1220 !important;
+    border: 1px solid rgba(15,23,42,.20) !important;
+    border-radius: 12px !important;
+    padding: 0.70rem 0.85rem !important;
+    font-size: 1.02rem !important;
+    font-weight: 800 !important;
+  }
+  textarea{ min-height: 120px !important; }
+
+  input::placeholder, textarea::placeholder{
+    color: rgba(71,85,105,.85) !important;
+  }
+
+  /* label più leggibili */
+  label, .stMarkdown, .stCaption, p, span{
+    -webkit-text-size-adjust: 100%;
+  }
+
+  /* Bottoni: touch-friendly */
+  .stButton>button, button{
+    border-radius: 14px !important;
+    padding: 0.75rem 1.0rem !important;
+    font-size: 1.05rem !important;
+    font-weight: 900 !important;
+    min-height: 46px !important;
+  }
+
+  /* Submit button nei form (es. Rapporto completo): grande, full-width, sempre leggibile */
+  div[data-testid="stFormSubmitButton"] > button,
+  div[data-testid="stFormSubmitButton"] button{
+    width: 100% !important;
+    min-height: 56px !important;
+    font-size: 1.12rem !important;
+    letter-spacing: .2px !important;
+  }
+
+  /* Barra "sticky" solo nel modulo da campo: il bottone invio resta sempre a portata */
+  .pc-card div[data-testid="stFormSubmitButton"]{
+    position: sticky !important;
+    bottom: 10px !important;
+    z-index: 50 !important;
+    padding: 0.35rem 0 !important;
+    background: linear-gradient(180deg, rgba(245,247,250,0) 0%, rgba(245,247,250,0.92) 35%, rgba(245,247,250,1) 100%) !important;
+  }
+
+  /* Pulsanti dell'uploader foto / file: miglior contrasto */
+  div[data-testid="stFileUploader"] section{
+    background: #ffffff !important;
+    border: 1px solid rgba(15,23,42,.14) !important;
+    border-radius: 14px !important;
+  }
+
+  /* Primari ben visibili */
+  button[kind="primary"], .stButton>button[kind="primary"]{
+    background: linear-gradient(135deg, #1976d2 0%, #0d47a1 100%) !important;
+    color: #ffffff !important;
+    border: 1px solid rgba(255,255,255,.20) !important;
+    box-shadow: 0 10px 22px rgba(13,71,161,.22) !important;
+  }
+
+  /* Nel modulo da campo: bottone invio ancora più evidente (verde) */
+  .pc-card button[kind="primary"], .pc-card .stButton>button[kind="primary"]{
+    background: linear-gradient(135deg, #2e7d32 0%, #1b5e20 100%) !important;
+    box-shadow: 0 12px 26px rgba(27,94,32,.22) !important;
+  }
+
+  /* Secondari chiari */
+  button[kind="secondary"], .stButton>button[kind="secondary"]{
+    background: #e3f2fd !important;
+    color: #0d47a1 !important;
+    border: 1px solid rgba(13,71,161,.18) !important;
+  }
+
+  /* Download button in campo: più largo e leggibile */
+  div[data-testid="stDownloadButton"] > button{
+    width: 100% !important;
+  }
+
 }
 
 </style>
@@ -1303,204 +1399,160 @@ with st.sidebar:
     st.divider()
 
     if ruolo == "SALA OPERATIVA":
-        st.markdown("## 👥 SQUADRE")
+        st.markdown("## ➕ SQUADRE ATTIVE")
         st.caption(f"Totale: **{len(st.session_state.squadre)}**")
 
-
-        # --- SQUADRE (sidebar) - lista HTML robusta (non dipende dagli expander Streamlit) ---
-        st.markdown("""<style>
-        /* Lista squadre in SIDEBAR: card blu chiaro + testi scuri + chevron bianco */
-        .pc-squad-html { margin-top: 6px; }
-        .pc-squad-item{
-          background: #e7f0ff;
-          border: 1px solid rgba(2,6,23,.12);
-          border-radius: 10px;
-          box-shadow: 0 6px 16px rgba(2,6,23,.10);
-          overflow: hidden;
-          margin: 8px 0;
-        }
-        .pc-squad-item > summary{
-          list-style: none;
-          cursor: pointer;
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          padding: 10px 12px;
-          color: #0b1220;
-          font-weight: 950;
-        }
-        .pc-squad-spacer{ flex: 1 1 auto; }
-        .pc-pencil{
-          width: 28px; height: 28px;
-          display: inline-flex; align-items:center; justify-content:center;
-          border-radius: 10px;
-          background: rgba(255,255,255,.75);
-          border: 1px solid rgba(2,6,23,.14);
-          color: #0b1220;
-          text-decoration: none;
-          font-size: 15px;
-          font-weight: 900;
-        }
-        .pc-pencil:hover{ background: #ffffff; }
-        .pc-pencil:active{ transform: translateY(1px); }
-        .pc-squad-item > summary::-webkit-details-marker { display:none; }
-        .pc-chev{
-          width: 24px; height: 24px;
-          display: inline-flex; align-items:center; justify-content:center;
-          border-radius: 999px;
-          background: rgba(13,71,161,.85);
-          color: #fff;
-          font-size: 18px;
-          line-height: 1;
-          flex: 0 0 24px;
-        }
-        .pc-squad-item[open] .pc-chev{ transform: rotate(90deg); transition: transform .12s ease; }
-        .pc-dot{
-          width: 10px; height: 10px; border-radius: 999px;
-          display: inline-block;
-          box-shadow: 0 0 0 3px rgba(255,255,255,.65);
-          flex: 0 0 10px;
-        }
-        .pc-dot-green{ background:#22c55e; }
-        .pc-dot-yellow{ background:#f59e0b; }
-        .pc-dot-red{ background:#ef4444; }
-        .pc-dot-blue{ background:#3b82f6; }
-        .pc-dot-purple{ background:#a855f7; }
-        .pc-dot-orange{ background:#f97316; }
-        .pc-dot-gray{ background:#64748b; }
-
-        .pc-squad-body{
-          background: rgba(255,255,255,.65);
-          padding: 8px 12px 10px 12px;
-          color: #0b1220;
-          font-weight: 600;
-          border-top: 1px solid rgba(2,6,23,.10);
-        }
-        .pc-squad-row{ margin: 4px 0; }
-        .pc-squad-row b{ font-weight: 950; }
-        .pc-squad-note{
-          margin-top: 10px;
-          font-size: .82rem;
-          color: #334155;
-        }
-        </style>""", unsafe_allow_html=True)
-
-        def _dot_class(stato: str) -> str:
-            s = (stato or "").lower()
-            if any(k in s for k in ["conclus", "rientr", "ok"]): return "pc-dot-green"
-            if any(k in s for k in ["in corso", "intervento", "emerg", "urgen"]): return "pc-dot-red"
-            if any(k in s for k in ["spost", "partit", "in viaggio", "verso"]): return "pc-dot-yellow"
-            if any(k in s for k in ["drone", "aereo", "volo"]): return "pc-dot-blue"
-            if any(k in s for k in ["idrov", "pomp", "allag"]): return "pc-dot-purple"
-            if any(k in s for k in ["sopralluog", "valutaz", "ricogn"]): return "pc-dot-orange"
-            return "pc-dot-gray"
-
         squadre_sorted = sorted(list(st.session_state.squadre.keys()))
-        html_parts = ["<div class='pc-squad-html'>"]
+
+        # pulizia selezioni se una squadra viene rinominata/eliminata
+        if st.session_state.get("team_open") and st.session_state.team_open not in st.session_state.squadre:
+            st.session_state.team_open = None
+        if st.session_state.get("team_edit_open") and st.session_state.team_edit_open not in st.session_state.squadre:
+            st.session_state.team_edit_open = None
+        if st.session_state.get("team_qr_open") and st.session_state.team_qr_open not in st.session_state.squadre:
+            st.session_state.team_qr_open = None
+
         for team in squadre_sorted:
             inf = get_squadra_info(team)
-            capo_txt = (inf.get("capo") or "—")
-            tel_txt = (inf.get("tel") or "—")
-            stato_txt = (inf.get("stato") or "—")
-            dot = _dot_class(stato_txt)
-            # NB: niente input/widget qui dentro: è solo UI robusta e leggibile
-            html_parts.append(
-                f"""<details class='pc-squad-item'>
-                    <summary>
-                      <span class='pc-chev'>›</span>
-                      <span class='pc-dot {dot}'></span>
-                      <span>{team}</span>
-                      <span class='pc-squad-spacer'></span>
-                      <a class='pc-pencil' href='#gestisci' title='Modifica / QR'>✏️</a>
-                    </summary>
-                    <div class='pc-squad-body'>
-                      <div class='pc-squad-row'><b>Stato:</b> {stato_txt}</div>
-                      <div class='pc-squad-row'><b>Capo:</b> {capo_txt}</div>
-                      <div class='pc-squad-row'><b>Tel:</b> {tel_txt}</div>
-                      <div class='pc-squad-note'>Per modifiche / QR usa “Gestisci squadra” qui sotto.</div>
-                    </div>
-                  </details>"""
-            )
-        html_parts.append("</div>")
-        st.markdown("\n".join(html_parts), unsafe_allow_html=True)
-
-        st.divider()
-        st.markdown("<div id='gestisci'></div>", unsafe_allow_html=True)
-        st.markdown("### ⚙️ Gestisci squadra")
-        sel_team = st.selectbox(
-            "Seleziona squadra",
-            options=[""] + squadre_sorted,
-            index=0,
-            key="sidebar_manage_team",
-            help="Seleziona una squadra per modificare dati, generare QR o eliminare."
-        )
-
-        if sel_team:
-            team = sel_team
-            inf = get_squadra_info(team)
+            hx = team_hex(team)
             capo_txt = inf["capo"] if inf["capo"] else "—"
             tel_txt = inf["tel"] if inf["tel"] else "—"
 
-            st.markdown(chip_stato(inf["stato"]), unsafe_allow_html=True)
-            st.markdown(f"**👤 Capo:** {capo_txt}")
-            st.markdown(f"**📞 Tel:** {tel_txt}")
+            exp_open = (st.session_state.get("team_open") == team)
+            with st.expander(f"●  {team}", expanded=exp_open):
+                st.markdown(
+                    f"<div style='display:flex;align-items:center;gap:10px;'>"
+                    f"<div class='pc-sqdot' style='background:{hx};margin-top:0;'></div>"
+                    f"<div style='flex:1;'>"
+                    f"<div class='pc-sqname' style='font-size:1.02rem'>{team}</div>"
+                    f"<div class='pc-sqsub'>👤 {capo_txt} · 📞 {tel_txt}</div>"
+                    f"</div></div>",
+                    unsafe_allow_html=True,
+                )
 
-            b1, b2 = st.columns(2)
-            if b1.button("✏️ MODIFICA", key=f"btn_edit_{team}"):
-                st.session_state.team_edit_open = team
-                st.session_state.team_qr_open = None
-                st.rerun()
-            if b2.button("📱 QR", key=f"btn_qr_{team}"):
-                st.session_state.team_qr_open = team
-                st.session_state.team_edit_open = None
-                st.rerun()
+                
+                # Riga comandi (chip a sinistra + icone a destra)
+                r1, r2, r3, r4, r5 = st.columns([6, 1, 1, 1, 1])
 
-            if st.session_state.get("team_edit_open") == team:
-                st.divider()
-                st.markdown("#### ✏️ Modifica squadra")
-                with st.form(f"form_edit_{team}"):
-                    new_name = st.text_input("Nome squadra", value=team)
-                    new_capo = st.text_input("Caposquadra", value=inf["capo"])
-                    new_tel = st.text_input("Telefono", value=inf["tel"])
-                    save = st.form_submit_button("💾 SALVA MODIFICHE")
-                if save:
-                    ok, msg = update_team(team, new_name, new_capo, new_tel)
-                    (st.success if ok else st.warning)(msg)
-                    if ok:
+                with r1:
+                    st.markdown(chip_stato(inf["stato"]), unsafe_allow_html=True)
+
+                # ✏️ Modifica (apre form sotto il nome)
+                if r2.button("✏️", key=f"open_edit_{team}", help="Modifica squadra", type="secondary"):
+                    st.session_state.team_open = team
+                    st.session_state.team_edit_open = team
+                    st.session_state.team_qr_open = None
+                    st.session_state["_del_arm"] = None
+                    st.rerun()
+
+                # 📱 QR
+                if r3.button("📱", key=f"open_qr_{team}", help="Mostra QR", type="secondary"):
+                    st.session_state.team_open = team
+                    st.session_state.team_qr_open = team
+                    st.session_state.team_edit_open = None
+                    st.session_state["_del_arm"] = None
+                    st.rerun()
+
+                # ♻️ Token
+                if r4.button("♻️", key=f"regen_tok_{team}", help="Rigenera token", type="secondary"):
+                    regenerate_team_token(team)
+                    st.session_state.team_open = team
+                    st.session_state.team_qr_open = team
+                    st.session_state.team_edit_open = None
+                    st.success("Token rigenerato ✅")
+                    st.rerun()
+
+                # 🗑️ Elimina (arm)
+                if r5.button("🗑️", key=f"del_{team}", help="Elimina squadra", type="secondary"):
+                    st.session_state.team_open = team
+                    st.session_state["_del_arm"] = team
+                    st.session_state.team_edit_open = None
+                    st.session_state.team_qr_open = None
+                    st.rerun()
+                # --- Modifica sotto il nome (solo se aperta) ---
+                if st.session_state.get("team_edit_open") == team:
+                    st.divider()
+                    st.markdown("### ✏️ Modifica squadra")
+
+                    with st.form(f"form_edit_{team}"):
+                        new_name = st.text_input("Nome squadra", value=team, help="Il nome viene salvato in MAIUSCOLO")
+                        new_capo = st.text_input("Caposquadra", value=inf["capo"], placeholder="Es. Rossi Mario")
+                        new_tel = st.text_input("Telefono", value=inf["tel"], placeholder="Es. 3331234567")
+                        cA, cB = st.columns(2)
+                        save = cA.form_submit_button("💾 Salva")
+                        close = cB.form_submit_button("✅ Chiudi")
+
+                    if save:
+                        ok, msg = update_team(team, new_name, new_capo, new_tel)
+                        (st.success if ok else st.warning)(msg)
+                        if ok:
+                            new_t = (new_name or "").strip().upper()
+                            st.session_state.team_open = new_t
+                            st.session_state.team_edit_open = None
+                            st.session_state.team_qr_open = None
+                            st.rerun()
+
+                    if close:
                         st.session_state.team_edit_open = None
                         st.rerun()
 
-            if st.session_state.get("team_qr_open") == team:
-                st.divider()
-                st.markdown("#### 📱 QR accesso caposquadra")
-                base_url = (st.session_state.get("BASE_URL") or "").strip().rstrip("/")
-                token = st.session_state.squadre[team].get("token", "")
-                if not base_url.startswith("http"):
-                    st.warning("⚠️ Imposta l'URL base: https://…streamlit.app")
-                else:
-                    link = f"{base_url}/?mode=campo&team={team}&token={token}"
-                    st.code(link, language="text")
-                    png = qr_png_bytes(link)
-                    st.image(png, width=230)
-                    st.download_button(
-                        "⬇️ Scarica QR (PNG)",
-                        data=png,
-                        file_name=f"QR_{team.replace(' ', '_')}.png",
-                        mime="image/png",
-                        key=f"dlqr_{team}",
-                    )
-                if st.button("❌ Chiudi QR", key=f"closeqr_{team}"):
-                    st.session_state.team_qr_open = None
-                    st.rerun()
+                # --- QR sotto il nome (solo se aperto) ---
+                if st.session_state.get("team_qr_open") == team:
+                    st.divider()
+                    st.markdown("### 📱 QR accesso caposquadra")
 
-            st.divider()
-            conferma = st.checkbox("Confermo eliminazione squadra", key=f"confdel_{team}")
-            if st.button("🗑️ ELIMINA SQUADRA", key=f"del_{team}", disabled=not conferma):
-                ok, msg = delete_team(team)
-                (st.success if ok else st.warning)(msg)
-                st.rerun()
+                    base_url = (st.session_state.get("BASE_URL") or "").strip().rstrip("/")
+                    token = st.session_state.squadre[team].get("token", "")
 
+                    if not base_url.startswith("http"):
+                        st.warning("⚠️ Imposta l'URL base: https://…streamlit.app")
+                    else:
+                        link = f"{base_url}/?mode=campo&team={team}&token={token}"
 
+                        # Link condivisibile (con pulsante copia integrato)
+                        st.text_input(
+                            "Link da copiare / inoltrare",
+                            value=link,
+                            key=f"sharelink_{team}",
+                        )
+
+                        # Link rapido WhatsApp (utile da PC o da telefono)
+                        wa_text = urllib.parse.quote(f"Link modulo caposquadra ({team}): {link}")
+                        st.markdown(
+                            f"<a href='https://wa.me/?text={wa_text}' target='_blank' "
+                            f"style='text-decoration:none;'>"
+                            f"<span style='display:inline-block;padding:.45rem .7rem;border-radius:10px;"
+                            f"border:1px solid #90caf9;background:#e3f2fd;color:#0d47a1;font-weight:600;'>"
+                            f"📲 Invia su WhatsApp</span></a>",
+                            unsafe_allow_html=True,
+                        )
+
+                        # QR
+                        png = qr_png_bytes(link)
+                        st.image(png, width=230)
+                        st.download_button(
+                            "⬇️📱",
+                            data=png,
+                            file_name=f"QR_{team.replace(' ', '_')}.png",
+                            mime="image/png",
+                            key=f"dlqr_{team}",
+                        )
+
+                # --- Conferma eliminazione (solo se armata) ---
+                if st.session_state.get("_del_arm") == team:
+                    st.divider()
+                    st.warning("Conferma eliminazione: questa azione è irreversibile.")
+                    conf = st.checkbox("Confermo eliminazione squadra", key=f"confdel_{team}")
+                    cD, cE = st.columns(2)
+                    if cD.button("✅ Conferma elimina", disabled=not conf, key=f"confirm_del_{team}"):
+                        ok, msg = delete_team(team)
+                        (st.success if ok else st.warning)(msg)
+                        st.session_state["_del_arm"] = None
+                        st.session_state.team_open = None
+                        st.rerun()
+                    if cE.button("❌ Annulla", key=f"cancel_del_{team}"):
+                        st.session_state["_del_arm"] = None
+                        st.rerun()
 
         st.divider()
         st.markdown("## ➕ CREA SQUADRA")
@@ -1517,19 +1569,28 @@ with st.sidebar:
                 st.warning("Esiste già una squadra con questo nome.")
             else:
                 token = uuid.uuid4().hex
+                used = {(inf.get("mhex") or "").strip() for inf in st.session_state.squadre.values()}
+                used = {hx for hx in used if hx.startswith("#") and len(hx) == 7}
+                colore = _pick_next_team_color(set(used))
+
                 st.session_state.squadre[nome] = {
                     "stato": "In attesa al COC",
                     "capo": (capo or "").strip(),
                     "tel": (tel or "").strip(),
                     "token": token,
+                    "mhex": colore,
                 }
                 save_data_to_disk()
+                # apri subito la scheda e mostra QR
+                st.session_state.team_open = nome
                 st.session_state.team_qr_open = nome
-                st.success("✅ Squadra creata! (QR aperto)")
+                st.session_state.team_edit_open = None
+                st.success("✅ Squadra creata! QR visibile sotto.")
                 st.rerun()
 
         st.divider()
         st.markdown("## 🌐 URL APP (per QR)")
+
         st.caption("Se hai streamlit-js-eval si compila da solo; altrimenti incolla l'URL.")
         st.session_state.BASE_URL = st.text_input(
             "Base URL Streamlit Cloud",
@@ -1541,6 +1602,7 @@ with st.sidebar:
     # BACKUP in fondo
     st.divider()
     st.markdown("## 💾 Backup / Ripristino")
+
     payload_now = {
         "brogliaccio": st.session_state.brogliaccio,
         "inbox": st.session_state.inbox,
@@ -1552,19 +1614,36 @@ with st.sidebar:
         "ev_nome": st.session_state.ev_nome,
         "ev_desc": st.session_state.ev_desc,
         "BASE_URL": st.session_state.get("BASE_URL", ""),
+        "cnt_conclusi": st.session_state.get("cnt_conclusi", 0),
     }
+
+    # 📦⬇️ Scarica
     st.download_button(
-        "⬇️ Scarica BACKUP JSON",
+        "📦⬇️",
         data=json.dumps(payload_now, ensure_ascii=False, indent=2).encode("utf-8"),
         file_name="backup_radio_manager.json",
         mime="application/json",
+        help="Scarica un backup completo (JSON) di brogliaccio, inbox, squadre e impostazioni.",
+        use_container_width=True,
     )
-    up = st.file_uploader("⬆️ Ripristina da backup JSON", type=["json"])
+
+    # 📦⬆️ Ripristina (carica JSON: ripristino automatico)
+    st.markdown("**📦⬆️ Carica backup**")
+    up = st.file_uploader(
+        "" ,
+        type=["json"],
+        key="restore_backup_json",
+        label_visibility="collapsed",
+        help="Carica un backup JSON esportato dal sistema: il ripristino parte automaticamente.",
+    )
+
     if up is not None:
-        if st.button("🔁 RIPRISTINA ORA"):
-            load_data_from_uploaded_json(up.read())
-            st.success("Ripristino completato.")
+        try:
+            load_data_from_uploaded_json(up.getvalue())
+            st.success("✅ Ripristino completato.")
             st.rerun()
+        except Exception:
+            st.error("❌ Backup non valido o file corrotto.")
 
 # =========================
 # HEADER
@@ -1593,7 +1672,6 @@ st.markdown(
 # MODULO CAPOSQUADRA
 # =========================
 if badge_ruolo == "MODULO CAPOSQUADRA":
-    st.markdown("<div class='capo-mode'>", unsafe_allow_html=True)
     st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
     st.subheader("📱 Modulo da campo")
 
@@ -1608,13 +1686,75 @@ if badge_ruolo == "MODULO CAPOSQUADRA":
 
     share_gps = st.checkbox("📍 Includi posizione GPS (Privacy)", value=True)
 
+    # Helper: posizione da inviare (GPS se disponibile, altrimenti manuale)
+    def get_field_pos_to_send(_share: bool):
+        if not _share:
+            return None
+        p = st.session_state.get("field_gps")
+        if isinstance(p, list) and len(p) == 2:
+            return p
+        mp = st.session_state.get("field_manual_pos")
+        if (
+            isinstance(mp, list)
+            and len(mp) == 2
+            and mp[0] is not None
+            and mp[1] is not None
+        ):
+            return mp
+        return None
+
+
+
+    # GPS dal telefono (richiede permesso posizione nel browser)
+    if "field_gps" not in st.session_state:
+        st.session_state.field_gps = None
+
+    gps_c1, gps_c2 = st.columns([2, 5])
+    with gps_c1:
+        # Pulsante più "touch" su smartphone
+        if st.button("📍 GPS", help="Aggiorna GPS dal telefono", use_container_width=True):
+            st.session_state.field_gps = get_phone_gps_once()
+
+    with gps_c2:
+        if share_gps:
+            _p = st.session_state.get("field_gps")
+            if isinstance(_p, list) and len(_p) == 2:
+                st.caption(f"GPS attuale: **{_p[0]:.6f}, {_p[1]:.6f}**")
+            else:
+                st.caption("GPS: **non disponibile**. Consenti la posizione sul telefono e premi 📍.")
+        else:
+            st.caption("GPS disattivato (Privacy).")
+
+
+
+    # Fallback manuale (se il GPS non viene letto dal browser)
+    if "field_manual_pos" not in st.session_state:
+        st.session_state.field_manual_pos = [None, None]
+
+    if share_gps:
+        _p = st.session_state.get("field_gps")
+        if not (isinstance(_p, list) and len(_p) == 2):
+            st.caption("✍️ Se il GPS non viene letto, inserisci manualmente le coordinate (da Google Maps).")
+            mc1, mc2 = st.columns(2)
+            # default: centro mappa corrente (solo come comodità)
+            try:
+                _dlat = float(st.session_state.pos_mappa[0])
+                _dlon = float(st.session_state.pos_mappa[1])
+            except Exception:
+                _dlat, _dlon = 45.0, 11.0
+            lat_man = mc1.number_input("LAT (manuale)", value=_dlat, format="%.6f", key="field_lat_manual")
+            lon_man = mc2.number_input("LON (manuale)", value=_dlon, format="%.6f", key="field_lon_manual")
+            st.session_state.field_manual_pos = [float(lat_man), float(lon_man)]
+    else:
+        st.session_state.field_manual_pos = [None, None]
+
     st.subheader("📍 Invio rapido")
     msg_rapido = st.text_input("Nota breve:", placeholder="In movimento, arrivati...")
 
-    if st.button("🚀 INVIA COORDINATE E MESSAGGIO"):
-        pos_da_inviare = st.session_state.pos_mappa if share_gps else None
+    if st.button("🚀 INVIA RAPIDO", use_container_width=True):
+        pos_da_inviare = get_field_pos_to_send(share_gps)
         st.session_state.inbox.append(
-            {"ora": datetime.now().strftime("%H:%M"), "sq": sq_c, "msg": msg_rapido or "Aggiornamento posizione", "foto": None, "pos": pos_da_inviare}
+            {"id": uuid.uuid4().hex, "ora": datetime.now().strftime("%H:%M"), "sq": sq_c, "msg": msg_rapido or "Aggiornamento posizione", "foto": None, "pos": pos_da_inviare}
         )
         save_data_to_disk()
         st.success("✅ Inviato!")
@@ -1624,15 +1764,14 @@ if badge_ruolo == "MODULO CAPOSQUADRA":
         st.subheader("📸 Rapporto completo")
         msg_c = st.text_area("DESCRIZIONE:")
         foto = st.file_uploader("FOTO:", type=["jpg", "jpeg", "png"])
-        if st.form_submit_button("INVIA TUTTO + GPS"):
-            pos_da_inviare = st.session_state.pos_mappa if share_gps else None
+        if st.form_submit_button("🚀 INVIA RAPPORTO COMPLETO", type="primary", use_container_width=True):
+            pos_da_inviare = get_field_pos_to_send(share_gps)
             st.session_state.inbox.append(
-                {"ora": datetime.now().strftime("%H:%M"), "sq": sq_c, "msg": msg_c, "foto": foto.read() if foto else None, "pos": pos_da_inviare}
+                {"id": uuid.uuid4().hex, "ora": datetime.now().strftime("%H:%M"), "sq": sq_c, "msg": msg_c, "foto": foto.read() if foto else None, "pos": pos_da_inviare}
             )
             save_data_to_disk()
             st.success("✅ Inviato!")
 
-    st.markdown("</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
 
@@ -1655,63 +1794,63 @@ def metric_box(col, icon, label, value):
 
 c1.markdown(metric_box(COLORI_STATI["In uscita dal COC"]["hex"], "🚪", "Uscita", st_lista.count("In uscita dal COC")), unsafe_allow_html=True)
 c2.markdown(metric_box(COLORI_STATI["Intervento in corso"]["hex"], "🔥", "In corso", st_lista.count("Intervento in corso")), unsafe_allow_html=True)
-c3.markdown(metric_box(COLORI_STATI["Intervento concluso"]["hex"], "✅", "Conclusi", st_lista.count("Intervento concluso")), unsafe_allow_html=True)
+c3.markdown(metric_box(COLORI_STATI["Intervento concluso"]["hex"], "✅", "Conclusi", st.session_state.get("cnt_conclusi", 0)), unsafe_allow_html=True)
+with c3:
+    if st.button("↺ Reset conclusi", help="Azzera il contatore cumulativo degli interventi conclusi", key="reset_cnt_conclusi", use_container_width=True):
+        st.session_state.cnt_conclusi = 0
+        save_data_to_disk()
+        st.rerun()
 c4.markdown(metric_box(COLORI_STATI["Rientrata al Coc"]["hex"], "↩️", "Rientro", st_lista.count("Rientrata al Coc")), unsafe_allow_html=True)
 c5.markdown(metric_box(COLORI_STATI["In attesa al COC"]["hex"], "🏠", "Al COC", st_lista.count("In attesa al COC")), unsafe_allow_html=True)
 
+
 # =========================
-# INBOX APPROVAZIONE (AVVISI) — RENDER SOPRA MAPPA
+# INBOX APPROVAZIONE
+# (renderizzato sopra la MAPPA)
 # =========================
-def render_inbox_panel():
-    """Mostra gli avvisi da validare (una alla volta), pensato per stare sopra la mappa."""
-    if not st.session_state.get("inbox"):
+def render_inbox_approval():
+    if not st.session_state.get('inbox'):
         return
-
-    st.markdown("<div class='pc-card pc-inbox'>", unsafe_allow_html=True)
-    st.markdown(f"<div class='pc-alert'>⚠️ RICEVUTI {len(st.session_state.inbox)} AGGIORNAMENTI DA VALIDARE</div>", unsafe_allow_html=True)
-    st.caption("Apri un avviso alla volta, valida o scarta. Dopo l'azione la pagina si aggiorna automaticamente.")
-
-    # Nota: usiamo range su una copia della lunghezza, perché su APPROVA/SCARTA facciamo rerun.
-    for i in range(len(st.session_state.inbox)):
-        data = st.session_state.inbox[i]
-        sq_in = data.get("sq", "")
+    for data in list(st.session_state.inbox):
+        msg_id = data.get("id") or uuid.uuid4().hex
+        data["id"] = msg_id
+        sq_in = data["sq"]
         inf_in = get_squadra_info(sq_in)
 
-        # chiusi di default (li apri uno a uno)
-        with st.expander(f"📥 {sq_in} · {data.get('ora','')}", expanded=False):
+        with st.expander(f"📥 APPROVAZIONE: {sq_in} ({data['ora']})", expanded=True):
             st.markdown(f"<div class='pc-flow'>📞 <b>{sq_in}</b> <span class='pc-arrow'>➜</span> 🎧 <b>SALA OPERATIVA</b></div>", unsafe_allow_html=True)
             st.markdown(f"**👤 Caposquadra:** {inf_in['capo'] or '—'} &nbsp;&nbsp; | &nbsp;&nbsp; **📞 Tel:** {inf_in['tel'] or '—'}")
 
-            st.write(f"**MSG:** {data.get('msg','')}")
-            if data.get("pos"):
+            st.write(f"**MSG:** {data['msg']}")
+            if data["pos"]:
                 st.info(f"📍 GPS acquisito: {data['pos']}")
-            if data.get("foto"):
-                st.image(data["foto"], width=260)
+            if data["foto"]:
+                st.image(data["foto"], width=220)
 
-            st_v = st.selectbox("Nuovo Stato:", list(COLORI_STATI.keys()), key=f"sv_inbox_{i}")
+            st_v = st.selectbox("Nuovo Stato:", list(COLORI_STATI.keys()), key=f"sv_inbox_{msg_id}")
             st.markdown(chip_stato(st_v), unsafe_allow_html=True)
 
             cb1, cb2 = st.columns(2)
-            if cb1.button("✅ APPROVA", key=f"ap_{i}"):
-                pref = "[AUTO]" if data.get("pos") else "[AUTO-PRIVACY]"
+            if cb1.button("✅ APPROVA", key=f"ap_{msg_id}"):
+                pref = "[AUTO]" if data["pos"] else "[AUTO-PRIVACY]"
                 st.session_state.brogliaccio.insert(
                     0,
-                    {"ora": data.get("ora",""), "chi": sq_in, "sq": sq_in, "st": st_v,
-                     "mit": f"{pref} {data.get('msg','')}", "ris": "VALIDATO", "op": st.session_state.op_name,
-                     "pos": data.get("pos"), "foto": data.get("foto")}
+                    {"ora": data["ora"], "chi": sq_in, "sq": sq_in, "st": st_v,
+                     "mit": f"{pref} {data['msg']}", "ris": "VALIDATO", "op": st.session_state.op_name,
+                     "pos": data["pos"], "foto": data["foto"]}
                 )
-                if sq_in in st.session_state.squadre:
-                    st.session_state.squadre[sq_in]["stato"] = st_v
-                st.session_state.inbox.pop(i)
+                prev_st = st.session_state.squadre.get(sq_in, {}).get("stato")
+                st.session_state.squadre[sq_in]["stato"] = st_v
+                if st_v == "Intervento concluso" and prev_st != "Intervento concluso":
+                    st.session_state.cnt_conclusi = int(st.session_state.get("cnt_conclusi", 0) or 0) + 1
+                st.session_state.inbox = [m for m in st.session_state.inbox if (m.get("id") != msg_id)]
                 save_data_to_disk()
                 st.rerun()
 
-            if cb2.button("🗑️ SCARTA", key=f"sc_{i}"):
-                st.session_state.inbox.pop(i)
+            if cb2.button("🗑️ SCARTA", key=f"sc_{msg_id}"):
+                st.session_state.inbox = [m for m in st.session_state.inbox if (m.get("id") != msg_id)]
                 save_data_to_disk()
                 st.rerun()
-
-    st.markdown("</div>", unsafe_allow_html=True)
 
 # =========================
 # DATI EVENTO
@@ -1765,18 +1904,35 @@ with t_rad:
                     {"ora": datetime.now().strftime("%H:%M"), "chi": chi, "sq": sq, "st": st_s,
                      "mit": mit, "ris": ris, "op": st.session_state.op_name, "pos": [lat, lon], "foto": None}
                 )
+                prev_st = st.session_state.squadre.get(sq, {}).get("stato")
                 st.session_state.squadre[sq]["stato"] = st_s
+                if st_s == "Intervento concluso" and prev_st != "Intervento concluso":
+                    st.session_state.cnt_conclusi = int(st.session_state.get("cnt_conclusi", 0) or 0) + 1
                 st.session_state.pos_mappa = [lat, lon]
                 save_data_to_disk()
                 st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
     with r:
-        render_inbox_panel()
+        # Avvisi e approvazioni: subito sopra la mappa
+        if st.session_state.get('inbox'):
+            cA, cB = st.columns([1, 0.25])
+            with cA:
+                st.markdown(f"<div class='pc-alert'>⚠️ RICEVUTI {len(st.session_state.inbox)} AGGIORNAMENTI DA VALIDARE</div>", unsafe_allow_html=True)
+            with cB:
+                if st.button('🔄', key='refresh_console', help='Aggiorna dati dalla memoria condivisa'):
+                    load_data_from_disk()
+                    st.rerun()
+            try:
+                render_inbox_approval()
+            except Exception as _e:
+                st.error("Errore visualizzazione inbox (non blocca la mappa). Premi 🔄")
+
+            st.divider()
 
         st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
         df_all = pd.DataFrame(st.session_state.brogliaccio)
-        m = build_folium_map_from_df(df_all, center=st.session_state.pos_mappa, zoom=14)
+        m = build_folium_map_from_df(df_all, center=st.session_state.pos_mappa, zoom=14, inbox=st.session_state.get('inbox'))
         st_folium(m, width="100%", height=450)
         # =========================
         # NATO – Convertitore (solo sala radio)
@@ -2034,6 +2190,7 @@ if col_m1.button("🧹 CANCELLA TUTTI I DATI"):
     d = default_state_payload()
     st.session_state.brogliaccio = d["brogliaccio"]
     st.session_state.inbox = d["inbox"]
+    ensure_inbox_ids()
     st.session_state.squadre = d["squadre"]
     st.session_state.pos_mappa = d["pos_mappa"]
     st.session_state.op_name = d["op_name"]
@@ -2052,27 +2209,3 @@ if col_m1.button("🧹 CANCELLA TUTTI I DATI"):
 if col_m2.button("💾 SALVA ORA SU DISCO"):
     save_data_to_disk()
     st.success("Salvato.")
-
-
-# =========================
-# FOOTER
-# =========================
-st.markdown("""
-<style>
-.pc-footer{
-  margin-top: 42px;
-  padding: 14px 10px 6px 10px;
-  text-align:center;
-  font-size: .85rem;
-  font-weight: 800;
-  color: #475569;
-  border-top: 1px solid rgba(15,23,42,.14);
-}
-.pc-footer a{ color:#0d47a1; text-decoration:none; font-weight: 900; }
-.pc-footer a:hover{ text-decoration: underline; }
-</style>
-
-<div class="pc-footer">
-  🛡️ Gruppo Comunale Volontari Protezione Civile Thiene · 📍 Via Dell'Aeroporto, 33 · ✉️ <a href="mailto:pcthiene@gmail.com">pcthiene@gmail.com</a> · 🎨 Realizzato da <b>JokArt</b>
-</div>
-""", unsafe_allow_html=True)

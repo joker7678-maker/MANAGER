@@ -1087,6 +1087,28 @@ section[data-testid="stSidebar"] .stDownloadButton > button{
 .nato-word{font-size:.70rem;font-weight:850;color:#334155;}
 @media print{.nato-title,.nato-mini,.nato-spell{display:none!important;}}
 
+
+/* Sidebar expander toggle (freccia) colore diverso */
+section[data-testid="stSidebar"] [data-testid="stExpanderToggleIcon"] svg{
+  color: #ffb300 !important;
+  fill: #ffb300 !important;
+}
+
+/* Sidebar: bottoni azione solo icone (stessa dimensione) */
+section[data-testid="stSidebar"] div[data-testid="stExpander"] button[kind="secondary"]{
+  width: 2.35rem !important;
+  height: 2.35rem !important;
+  padding: 0 !important;
+  border-radius: 12px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stExpander"] button[kind="secondary"] span{
+  font-size: 1.05rem !important;
+  line-height: 1 !important;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -1135,26 +1157,31 @@ with st.sidebar:
                     unsafe_allow_html=True,
                 )
 
-                st.markdown(chip_stato(inf["stato"]), unsafe_allow_html=True)
+                
+                # Riga comandi (chip a sinistra + icone a destra)
+                r1, r2, r3, r4, r5 = st.columns([6, 1, 1, 1, 1])
 
-                a1, a2, a3, a4 = st.columns([1, 1, 1, 1])
+                with r1:
+                    st.markdown(chip_stato(inf["stato"]), unsafe_allow_html=True)
 
-                # freccia/modifica in colore diverso
-                if a1.button("🟧 ➜ MODIFICA", key=f"open_edit_{team}"):
+                # ✏️ Modifica (apre form sotto il nome)
+                if r2.button("✏️", key=f"open_edit_{team}", help="Modifica squadra", type="secondary"):
                     st.session_state.team_open = team
                     st.session_state.team_edit_open = team
                     st.session_state.team_qr_open = None
                     st.session_state["_del_arm"] = None
                     st.rerun()
 
-                if a2.button("📱 QR", key=f"open_qr_{team}"):
+                # 📱 QR
+                if r3.button("📱", key=f"open_qr_{team}", help="Mostra QR", type="secondary"):
                     st.session_state.team_open = team
                     st.session_state.team_qr_open = team
                     st.session_state.team_edit_open = None
                     st.session_state["_del_arm"] = None
                     st.rerun()
 
-                if a3.button("♻️ TOKEN", key=f"regen_tok_{team}"):
+                # ♻️ Token
+                if r4.button("♻️", key=f"regen_tok_{team}", help="Rigenera token", type="secondary"):
                     regenerate_team_token(team)
                     st.session_state.team_open = team
                     st.session_state.team_qr_open = team
@@ -1162,13 +1189,13 @@ with st.sidebar:
                     st.success("Token rigenerato ✅")
                     st.rerun()
 
-                if a4.button("🗑️ ELIMINA", key=f"del_{team}"):
+                # 🗑️ Elimina (arm)
+                if r5.button("🗑️", key=f"del_{team}", help="Elimina squadra", type="secondary"):
                     st.session_state.team_open = team
                     st.session_state["_del_arm"] = team
                     st.session_state.team_edit_open = None
                     st.session_state.team_qr_open = None
                     st.rerun()
-
                 # --- Modifica sotto il nome (solo se aperta) ---
                 if st.session_state.get("team_edit_open") == team:
                     st.divider()

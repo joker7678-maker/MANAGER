@@ -2058,7 +2058,7 @@ st_folium(
         # =========================
         # NATO – Convertitore (solo sala radio)
         # =========================
-        st.markdown(
+st.markdown(
 	"<div class='nato-title'>📻 Alfabeto NATO – convertitore</div>",
 	 unsafe_allow_html=True)
 

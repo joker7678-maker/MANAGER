@@ -1020,18 +1020,6 @@ section[data-testid="stSidebar"] .stDownloadButton > button{
   font-weight: 950 !important;
 }
 
-/* Sidebar — lista squadre compatta */
-.pc-sqdot{
-  width: 12px; height: 12px;
-  border-radius: 999px;
-  margin-top: 10px;
-  border: 1px solid rgba(255,255,255,.35);
-  box-shadow: 0 6px 14px rgba(2,6,23,.18);
-}
-.pc-sqrow{ line-height: 1.1; padding: 2px 0; }
-.pc-sqname{ font-weight: 950; color: #f8fafc; font-size: .95rem; }
-.pc-sqsub{ font-weight: 800; color: rgba(248,250,252,.92); font-size: .74rem; margin-top: 2px; }
-
 /* NATO mini (solo sala radio) */
 .nato-title{margin-top:10px;font-weight:950;color:#0d47a1;font-size:.9rem;}
 .nato-mini{display:grid;grid-template-columns:repeat(auto-fill,minmax(74px,1fr));gap:6px;margin-top:10px;}
@@ -1060,7 +1048,7 @@ with st.sidebar:
         st.markdown("## 👥 SQUADRE")
         st.caption(f"Totale: **{len(st.session_state.squadre)}**")
 
-        # --- Lista compatta (niente cerca squadre) ---
+        # Lista compatta (icone allineate a fianco al nome)
         squadre_sorted = sorted(list(st.session_state.squadre.keys()))
         for team in squadre_sorted:
             inf = get_squadra_info(team)
@@ -1068,7 +1056,7 @@ with st.sidebar:
             capo_txt = inf["capo"] if inf["capo"] else "—"
             tel_txt = inf["tel"] if inf["tel"] else "—"
 
-            c0, c1, c2 = st.columns([0.18, 1, 0.60])
+            c0, c1, c2 = st.columns([0.18, 1.0, 0.42], gap="small")
             c0.markdown(
                 f"<div class='pc-sqdot' style='background:{stato_hex};'></div>",
                 unsafe_allow_html=True,
@@ -1078,7 +1066,7 @@ with st.sidebar:
                 f"<div class='pc-sqsub'>👤 {capo_txt} · 📞 {tel_txt}</div></div>",
                 unsafe_allow_html=True,
             )
-            b_edit, b_qr = c2.columns(2)
+            b_edit, b_qr = c2.columns(2, gap="small")
             if b_edit.button("✏️", key=f"btn_edit_{team}"):
                 st.session_state.team_edit_open = team
                 st.session_state.team_qr_open = None
@@ -1088,92 +1076,87 @@ with st.sidebar:
                 st.session_state.team_edit_open = None
                 st.rerun()
 
-        # --- Modulo gestione (pulito e centralizzato) ---
+        # Gestione squadra: si apre cliccando ✏️ (niente selezione)
         st.divider()
         st.markdown("## 🧰 Gestione squadra")
 
-        # se non c'è una selezione attiva, usa la prima
-        if st.session_state.get("team_edit_open") not in st.session_state.squadre and st.session_state.squadre:
-            st.session_state.team_edit_open = sorted(list(st.session_state.squadre.keys()))[0]
+        team_sel = st.session_state.get("team_edit_open")
+        if team_sel and team_sel not in st.session_state.squadre:
+            team_sel = None
+            st.session_state.team_edit_open = None
 
-        team_sel = st.selectbox(
-            "Seleziona squadra",
-            options=sorted(list(st.session_state.squadre.keys())),
-            index=sorted(list(st.session_state.squadre.keys())).index(st.session_state.team_edit_open)
-            if st.session_state.get("team_edit_open") in st.session_state.squadre
-            else 0,
-            key="team_manage_sel",
-        )
-        st.session_state.team_edit_open = team_sel
-        inf = get_squadra_info(team_sel)
-        st.markdown(chip_stato(inf["stato"]), unsafe_allow_html=True)
+        if not team_sel:
+            st.info("Clicca **✏️** a fianco di una squadra per aprire la modifica.")
+        else:
+            inf = get_squadra_info(team_sel)
+            st.markdown(chip_stato(inf["stato"]), unsafe_allow_html=True)
 
-        with st.form("form_team_manage"):
-            new_name = st.text_input("Nome squadra", value=team_sel, help="Il nome viene salvato in MAIUSCOLO")
-            new_capo = st.text_input("Caposquadra", value=inf["capo"], placeholder="Es. Rossi Mario")
-            new_tel = st.text_input("Telefono", value=inf["tel"], placeholder="Es. 3331234567")
-            s1, s2 = st.columns(2)
-            save = s1.form_submit_button("💾 Salva")
-            open_qr = s2.form_submit_button("📱 Apri QR")
+            with st.form("form_team_manage"):
+                new_name = st.text_input("Nome squadra", value=team_sel, help="Il nome viene salvato in MAIUSCOLO")
+                new_capo = st.text_input("Caposquadra", value=inf["capo"], placeholder="Es. Rossi Mario")
+                new_tel = st.text_input("Telefono", value=inf["tel"], placeholder="Es. 3331234567")
+                s1, s2 = st.columns(2)
+                save = s1.form_submit_button("💾 Salva")
+                open_qr = s2.form_submit_button("📱 Apri QR")
 
-        if save:
-            ok, msg = update_team(team_sel, new_name, new_capo, new_tel)
-            (st.success if ok else st.warning)(msg)
-            if ok:
-                # allinea selezione su nuovo nome
-                st.session_state.team_edit_open = (new_name or "").strip().upper()
-                st.session_state.team_qr_open = None
-                st.rerun()
-
-        if open_qr:
-            st.session_state.team_qr_open = team_sel
-            st.rerun()
-
-        st.caption("Se il QR è stato condiviso per errore, rigenera il token.")
-        ctk1, ctk2 = st.columns(2)
-        if ctk1.button("♻️ Rigenera token", key="regen_token_manage"):
-            regenerate_team_token(team_sel)
-            st.success("Token rigenerato ✅")
-            st.session_state.team_qr_open = team_sel
-            st.rerun()
-
-        if ctk2.button("🗑️ Elimina", key="delete_team_manage"):
-            st.session_state["_del_arm"] = team_sel
-
-        if st.session_state.get("_del_arm") == team_sel:
-            st.warning("Conferma eliminazione: questa azione è irreversibile.")
-            conf = st.checkbox("Confermo eliminazione squadra", key="confdel_manage")
-            if st.button("✅ Conferma elimina", disabled=not conf, key="confirm_delete_manage"):
-                ok, msg = delete_team(team_sel)
+            if save:
+                ok, msg = update_team(team_sel, new_name, new_capo, new_tel)
                 (st.success if ok else st.warning)(msg)
-                st.session_state["_del_arm"] = None
+                if ok:
+                    st.session_state.team_edit_open = (new_name or "").strip().upper()
+                    st.session_state.team_qr_open = None
+                    st.rerun()
+
+            if open_qr:
+                st.session_state.team_qr_open = team_sel
                 st.rerun()
-            if st.button("❌ Annulla", key="cancel_delete_manage"):
-                st.session_state["_del_arm"] = None
+
+            st.caption("Se il QR è stato condiviso per errore, rigenera il token.")
+            ctk1, ctk2 = st.columns(2)
+            if ctk1.button("♻️ Rigenera token", key="regen_token_manage"):
+                regenerate_team_token(team_sel)
+                st.success("Token rigenerato ✅")
+                st.session_state.team_qr_open = team_sel
                 st.rerun()
 
-        if st.session_state.get("team_qr_open") == team_sel:
-            st.divider()
-            st.markdown("### 📱 QR accesso caposquadra")
+            if ctk2.button("🗑️ Elimina", key="delete_team_manage"):
+                st.session_state["_del_arm"] = team_sel
 
-            base_url = (st.session_state.get("BASE_URL") or "").strip().rstrip("/")
-            token = st.session_state.squadre[team_sel].get("token", "")
+            if st.session_state.get("_del_arm") == team_sel:
+                st.warning("Conferma eliminazione: questa azione è irreversibile.")
+                conf = st.checkbox("Confermo eliminazione squadra", key="confdel_manage")
+                if st.button("✅ Conferma elimina", disabled=not conf, key="confirm_delete_manage"):
+                    ok, msg = delete_team(team_sel)
+                    (st.success if ok else st.warning)(msg)
+                    st.session_state["_del_arm"] = None
+                    st.session_state.team_edit_open = None
+                    st.session_state.team_qr_open = None
+                    st.rerun()
+                if st.button("❌ Annulla", key="cancel_delete_manage"):
+                    st.session_state["_del_arm"] = None
+                    st.rerun()
 
-            if not base_url.startswith("http"):
-                st.warning("⚠️ Imposta l'URL base: https://…streamlit.app")
-            else:
-                link = f"{base_url}/?mode=campo&team={team_sel}&token={token}"
-                st.code(link, language="text")
-                png = qr_png_bytes(link)
-                st.image(png, width=230)
-                st.download_button(
-                    "⬇️ Scarica QR (PNG)",
-                    data=png,
-                    file_name=f"QR_{team_sel.replace(' ', '_')}.png",
-                    mime="image/png",
-                    key=f"dlqr_{team_sel}",
-                )
+            if st.session_state.get("team_qr_open") == team_sel:
+                st.divider()
+                st.markdown("### 📱 QR accesso caposquadra")
 
+                base_url = (st.session_state.get("BASE_URL") or "").strip().rstrip("/")
+                token = st.session_state.squadre[team_sel].get("token", "")
+
+                if not base_url.startswith("http"):
+                    st.warning("⚠️ Imposta l'URL base: https://…streamlit.app")
+                else:
+                    link = f"{base_url}/?mode=campo&team={team_sel}&token={token}"
+                    st.code(link, language="text")
+                    png = qr_png_bytes(link)
+                    st.image(png, width=230)
+                    st.download_button(
+                        "⬇️ Scarica QR (PNG)",
+                        data=png,
+                        file_name=f"QR_{team_sel.replace(' ', '_')}.png",
+                        mime="image/png",
+                        key=f"dlqr_{team_sel}",
+                    )
         st.divider()
         st.markdown("## ➕ CREA SQUADRA")
         with st.form("form_add_team", clear_on_submit=True):

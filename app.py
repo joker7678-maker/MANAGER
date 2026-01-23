@@ -1525,16 +1525,14 @@ def metric_box(col, icon, label, value):
 c1.markdown(metric_box(COLORI_STATI["In uscita dal COC"]["hex"], "🚪", "Uscita", st_lista.count("In uscita dal COC")), unsafe_allow_html=True)
 c2.markdown(metric_box(COLORI_STATI["Intervento in corso"]["hex"], "🔥", "In corso", st_lista.count("Intervento in corso")), unsafe_allow_html=True)
 c3.markdown(metric_box(COLORI_STATI["Intervento concluso"]["hex"], "✅", "Conclusi", st.session_state.get("cnt_conclusi", 0)), unsafe_allow_html=True)
-c4.markdown(metric_box(COLORI_STATI["Rientrata al Coc"]["hex"], "↩️", "Rientro", st_lista.count("Rientrata al Coc")), unsafe_allow_html=True)
-c5.markdown(metric_box(COLORI_STATI["In attesa al COC"]["hex"], "🏠", "Al COC", st_lista.count("In attesa al COC")), unsafe_allow_html=True)
-
-# reset contatori (solo conclusi cumulativi)
-cr1, cr2 = st.columns([6, 1])
-with cr2:
-    if st.button("↺ Reset", help="Reset contatore interventi conclusi", key="reset_cnt_conclusi"):
+with c3:
+    if st.button("↺ Reset conclusi", help="Azzera il contatore cumulativo degli interventi conclusi", key="reset_cnt_conclusi", use_container_width=True):
         st.session_state.cnt_conclusi = 0
         save_data_to_disk()
         st.rerun()
+c4.markdown(metric_box(COLORI_STATI["Rientrata al Coc"]["hex"], "↩️", "Rientro", st_lista.count("Rientrata al Coc")), unsafe_allow_html=True)
+c5.markdown(metric_box(COLORI_STATI["In attesa al COC"]["hex"], "🏠", "Al COC", st_lista.count("In attesa al COC")), unsafe_allow_html=True)
+
 
 # =========================
 # INBOX APPROVAZIONE

@@ -824,7 +824,7 @@ try:
 except Exception:
     pass
 
-# (salvataggio su disco solo quando cambiano i dati)
+save_data_to_disk()
 
 # =========================
 # TEAM OPS
@@ -1299,7 +1299,7 @@ if badge_ruolo == "MODULO CAPOSQUADRA":
         st.session_state.inbox.append(
             {"ora": datetime.now().strftime("%H:%M"), "sq": sq_c, "msg": msg_rapido or "Aggiornamento posizione", "foto": None, "pos": pos_da_inviare}
         )
-        save_data_to_disk(force=True)
+        save_data_to_disk()
         st.success("✅ Inviato!")
 
     st.divider()
@@ -1312,7 +1312,7 @@ if badge_ruolo == "MODULO CAPOSQUADRA":
             st.session_state.inbox.append(
                 {"ora": datetime.now().strftime("%H:%M"), "sq": sq_c, "msg": msg_c, "foto": foto.read() if foto else None, "pos": pos_da_inviare}
             )
-            save_data_to_disk(force=True)
+            save_data_to_disk()
             st.success("✅ Inviato!")
 
     st.markdown("</div>", unsafe_allow_html=True)
@@ -1375,12 +1375,12 @@ if st.session_state.inbox:
                 )
                 st.session_state.squadre[sq_in]["stato"] = st_v
                 st.session_state.inbox.pop(i)
-                save_data_to_disk(force=True)
+                save_data_to_disk()
                 st.rerun()
 
             if cb2.button("🗑️ SCARTA", key=f"sc_{i}"):
                 st.session_state.inbox.pop(i)
-                save_data_to_disk(force=True)
+                save_data_to_disk()
                 st.rerun()
 
 # =========================
@@ -1437,7 +1437,7 @@ with t_rad:
                 )
                 st.session_state.squadre[sq]["stato"] = st_s
                 st.session_state.pos_mappa = [lat, lon]
-                save_data_to_disk(force=True)
+                save_data_to_disk()
                 st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1720,10 +1720,10 @@ if col_m1.button("🧹 CANCELLA TUTTI I DATI"):
     st.session_state.open_map_event = None
     st.session_state.team_edit_open = None
     st.session_state.team_qr_open = None
-    save_data_to_disk(force=True)
+    save_data_to_disk()
     st.success("Tutti i dati sono stati cancellati.")
     st.rerun()
 
 if col_m2.button("💾 SALVA ORA SU DISCO"):
-    save_data_to_disk(force=True)
+    save_data_to_disk()
     st.success("Salvato.")

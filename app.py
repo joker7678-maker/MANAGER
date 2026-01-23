@@ -1296,12 +1296,43 @@ section[data-testid="stSidebar"] div[data-testid="stExpander"] button[kind="seco
     min-height: 46px !important;
   }
 
+  /* Submit button nei form (es. Rapporto completo): grande, full-width, sempre leggibile */
+  div[data-testid="stFormSubmitButton"] > button,
+  div[data-testid="stFormSubmitButton"] button{
+    width: 100% !important;
+    min-height: 56px !important;
+    font-size: 1.12rem !important;
+    letter-spacing: .2px !important;
+  }
+
+  /* Barra "sticky" solo nel modulo da campo: il bottone invio resta sempre a portata */
+  .pc-card div[data-testid="stFormSubmitButton"]{
+    position: sticky !important;
+    bottom: 10px !important;
+    z-index: 50 !important;
+    padding: 0.35rem 0 !important;
+    background: linear-gradient(180deg, rgba(245,247,250,0) 0%, rgba(245,247,250,0.92) 35%, rgba(245,247,250,1) 100%) !important;
+  }
+
+  /* Pulsanti dell'uploader foto / file: miglior contrasto */
+  div[data-testid="stFileUploader"] section{
+    background: #ffffff !important;
+    border: 1px solid rgba(15,23,42,.14) !important;
+    border-radius: 14px !important;
+  }
+
   /* Primari ben visibili */
   button[kind="primary"], .stButton>button[kind="primary"]{
     background: linear-gradient(135deg, #1976d2 0%, #0d47a1 100%) !important;
     color: #ffffff !important;
     border: 1px solid rgba(255,255,255,.20) !important;
     box-shadow: 0 10px 22px rgba(13,71,161,.22) !important;
+  }
+
+  /* Nel modulo da campo: bottone invio ancora più evidente (verde) */
+  .pc-card button[kind="primary"], .pc-card .stButton>button[kind="primary"]{
+    background: linear-gradient(135deg, #2e7d32 0%, #1b5e20 100%) !important;
+    box-shadow: 0 12px 26px rgba(27,94,32,.22) !important;
   }
 
   /* Secondari chiari */
@@ -1608,9 +1639,10 @@ if badge_ruolo == "MODULO CAPOSQUADRA":
     if "field_gps" not in st.session_state:
         st.session_state.field_gps = None
 
-    gps_c1, gps_c2 = st.columns([1, 5])
+    gps_c1, gps_c2 = st.columns([2, 5])
     with gps_c1:
-        if st.button("📍", help="Aggiorna GPS dal telefono"):
+        # Pulsante più "touch" su smartphone
+        if st.button("📍 GPS", help="Aggiorna GPS dal telefono", use_container_width=True):
             st.session_state.field_gps = get_phone_gps_once()
 
     with gps_c2:
@@ -1627,7 +1659,7 @@ if badge_ruolo == "MODULO CAPOSQUADRA":
     st.subheader("📍 Invio rapido")
     msg_rapido = st.text_input("Nota breve:", placeholder="In movimento, arrivati...")
 
-    if st.button("🚀 INVIA COORDINATE E MESSAGGIO"):
+    if st.button("🚀 INVIA RAPIDO", use_container_width=True):
         pos_da_inviare = st.session_state.get('field_gps') if share_gps else None
         st.session_state.inbox.append(
             {"ora": datetime.now().strftime("%H:%M"), "sq": sq_c, "msg": msg_rapido or "Aggiornamento posizione", "foto": None, "pos": pos_da_inviare}
@@ -1640,7 +1672,7 @@ if badge_ruolo == "MODULO CAPOSQUADRA":
         st.subheader("📸 Rapporto completo")
         msg_c = st.text_area("DESCRIZIONE:")
         foto = st.file_uploader("FOTO:", type=["jpg", "jpeg", "png"])
-        if st.form_submit_button("INVIA TUTTO + GPS"):
+        if st.form_submit_button("🚀 INVIA RAPPORTO COMPLETO", type="primary", use_container_width=True):
             pos_da_inviare = st.session_state.get('field_gps') if share_gps else None
             st.session_state.inbox.append(
                 {"ora": datetime.now().strftime("%H:%M"), "sq": sq_c, "msg": msg_c, "foto": foto.read() if foto else None, "pos": pos_da_inviare}

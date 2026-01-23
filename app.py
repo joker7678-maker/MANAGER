@@ -37,46 +37,45 @@ COLORI_STATI = {
     "Rientrata al Coc": {"color": "green", "hex": "#81c784"},
 }
 
-
-# =========================
-# COLORI SQUADRE (marker + pallini) — coerenti con mappa
-# =========================
-TEAM_COLOR_PALETTE = [
-    ("red", "#ef4444"),
-    ("blue", "#3b82f6"),
-    ("green", "#22c55e"),
-    ("orange", "#f59e0b"),
-    ("purple", "#a855f7"),
-    ("cadetblue", "#06b6d4"),
-    ("darkred", "#991b1b"),
-    ("darkblue", "#1e3a8a"),
-    ("darkgreen", "#14532d"),
-    ("pink", "#ec4899"),
-    ("lightblue", "#60a5fa"),
-    ("lightgreen", "#86efac"),
-    ("gray", "#6b7280"),
-    ("black", "#111827"),
-    ("lightgray", "#cbd5e1"),
-    ("beige", "#f5f5dc"),
+# Colori fissi per SQUADRA (usati sia nei pallini in sidebar che nei marker in mappa)
+# (cicla se le squadre sono più della palette)
+COLORI_SQUADRE = [
+    "#e53935",  # rosso
+    "#1e88e5",  # blu
+    "#43a047",  # verde
+    "#fb8c00",  # arancio
+    "#8e24aa",  # viola
+    "#00897b",  # teal
+    "#6d4c41",  # marrone
+    "#546e7a",  # blu-grigio
+    "#c0ca33",  # lime
+    "#f4511e",  # arancio scuro
 ]
 
-def ensure_team_colors() -> None:
-    """Assicura che ogni squadra abbia un colore marker (folium) + hex dot persistiti."""
-    names = sorted(list(st.session_state.get("squadre", {}).keys()))
-    for idx, name in enumerate(names):
-        info = st.session_state.squadre.get(name, {})
-        if not info.get("mcolor") or not info.get("mhex"):
-            c, hx = TEAM_COLOR_PALETTE[idx % len(TEAM_COLOR_PALETTE)]
-            info["mcolor"] = c
-            info["mhex"] = hx
-            st.session_state.squadre[name] = info
+def _pick_next_team_color(used_hex: set) -> str:
+    for hx in COLORI_SQUADRE:
+        if hx not in used_hex:
+            return hx
+    return COLORI_SQUADRE[len(used_hex) % len(COLORI_SQUADRE)]
 
-def get_team_color(team: str) -> dict:
-    info = st.session_state.squadre.get((team or "").strip().upper(), {})
-    return {
-        "mcolor": info.get("mcolor", "blue"),
-        "mhex": info.get("mhex", "#3b82f6"),
-    }
+def ensure_team_colors() -> None:
+    """Assicura che ogni squadra abbia un colore fisso ('mhex')."""
+    used = set()
+    for _name, info in st.session_state.squadre.items():
+        hx = (info.get("mhex") or "").strip()
+        if hx.startswith("#") and len(hx) == 7:
+            used.add(hx)
+    for name in sorted(st.session_state.squadre.keys()):
+        info = st.session_state.squadre[name]
+        hx = (info.get("mhex") or "").strip()
+        if not (hx.startswith("#") and len(hx) == 7):
+            info["mhex"] = _pick_next_team_color(used)
+            used.add(info["mhex"])
+
+def team_hex(team: str) -> str:
+    info = st.session_state.squadre.get(team, {}) if hasattr(st.session_state, "squadre") else {}
+    hx = (info.get("mhex") or "").strip()
+    return hx if (hx.startswith("#") and len(hx) == 7) else "#1e88e5"
 
 
 # =========================
@@ -163,19 +162,26 @@ def build_folium_map_from_df(df: pd.DataFrame, center: list, zoom: int = 13) -> 
     if not df.empty:
         for _, row in df.iterrows():
             pos = row.get("pos")
-            sq = row.get("sq")
-            stt = row.get("st")
-            if isinstance(pos, list) and len(pos) == 2:
+            sq = (row.get("sq") or "").strip()
+            stt = (row.get("st") or "").strip()
+            if isinstance(pos, list) and len(pos) == 2 and sq:
                 ultime_pos[sq] = {"pos": pos, "st": stt}
 
     for sq, info in ultime_pos.items():
-        stt = info["st"]
-        folium.Marker(
-            info["pos"],
-            tooltip=f"{sq}: {stt}",
-            icon=folium.Icon(color=get_team_color(sq).get("mcolor", "blue")),
+        stt = info["st"] or ""
+        hx = team_hex(sq)
+        folium.CircleMarker(
+            location=info["pos"],
+            radius=8,
+            color=hx,
+            weight=3,
+            fill=True,
+            fill_color=hx,
+            fill_opacity=1.0,
+            tooltip=f"{sq}: {stt}" if stt else sq,
         ).add_to(m)
     return m
+
 
 def df_for_report(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
@@ -226,7 +232,7 @@ def qr_png_bytes(url: str) -> bytes:
 # =========================
 # STATIC MAP (PER STAMPA HTML AFFIDABILE)
 # =========================
-def _extract_points_latest_by_team(df: pd.DataFrame, squads: Dict[str, Any]) -> List[Tuple[float, float, str, str]]:
+def _extract_points_latest_by_team(df: pd.DataFrame) -> List[Tuple[float, float, str]]:
     """
     Ritorna (lat, lon, label) con ultima posizione per squadra (dedup).
     """
@@ -248,12 +254,11 @@ def _extract_points_latest_by_team(df: pd.DataFrame, squads: Dict[str, Any]) -> 
                 continue
             stt = (row.get("st") or "").strip()
             label = f"{sq} · {stt}" if stt else sq
-            hx = (squads.get(sq, {}) or {}).get("mhex", "#2563eb")
-            points.append((lat, lon, label, hx))
+            points.append((lat, lon, label))
             seen.add(sq)
     return points
 
-def _extract_points_all_events(df: pd.DataFrame, squads: Dict[str, Any]) -> List[Tuple[float, float, str, str]]:
+def _extract_points_all_events(df: pd.DataFrame) -> List[Tuple[float, float, str]]:
     """
     Ritorna (lat, lon, label) per tutti gli eventi con GPS (anche ripetuti).
     """
@@ -271,9 +276,7 @@ def _extract_points_all_events(df: pd.DataFrame, squads: Dict[str, Any]) -> List
             ora = (row.get("ora") or "").strip()
             stt = (row.get("st") or "").strip()
             label = " · ".join([x for x in [sq, ora, stt] if x])
-            sq = (row.get("sq") or "").strip().upper()
-            hx = (squads.get(sq, {}) or {}).get("mhex", "#2563eb")
-            points.append((lat, lon, label if label else "Evento", hx))
+            points.append((lat, lon, label if label else "Evento"))
     return points
 
 def _extract_polyline_all_events(df: pd.DataFrame) -> List[Tuple[float, float]]:
@@ -295,7 +298,7 @@ def _extract_polyline_all_events(df: pd.DataFrame) -> List[Tuple[float, float]]:
     return line
 
 def render_static_map_png(
-    points: List[Tuple[float, float, str, str]],
+    points: List[Tuple[float, float, str]],
     polyline: Optional[List[Tuple[float, float]]] = None,
     size: Tuple[int, int] = (1200, 700),
     zoom: int = 14,
@@ -316,9 +319,9 @@ def render_static_map_png(
             smap.add_line(Line(polyline, "#111827", 3))  # colore scuro, spessore 3
 
         # marker
-        for (lat, lon, label, hx) in points:
+        for (lat, lon, label) in points:
             # marker blu
-            smap.add_marker(CircleMarker((lon, lat), hx or "#2563eb", 10))
+            smap.add_marker(CircleMarker((lon, lat), "#2563eb", 10))
             # (staticmap non stampa label sul tile; ma almeno i punti ci sono)
 
         image = smap.render(zoom=zoom)
@@ -366,12 +369,12 @@ def make_html_report_bytes(
         returns dict: {LATEST: datauri, ALL: datauri, TRACK: datauri} or placeholders
         """
         # LATEST
-        pts_latest = _extract_points_latest_by_team(df_x, squads) if "sq" in df_x.columns else _extract_points_all_events(df_x, squads)
+        pts_latest = _extract_points_latest_by_team(df_x) if "sq" in df_x.columns else _extract_points_all_events(df_x)
         # se df_x è filtrato per squadra, latest_by_team = 1 punto (ok); se totale = multi-squadre (ok)
         png_latest = render_static_map_png(pts_latest, polyline=None, zoom=14)
 
         # ALL
-        pts_all = _extract_points_all_events(df_x, squads)
+        pts_all = _extract_points_all_events(df_x)
         png_all = render_static_map_png(pts_all, polyline=None, zoom=14)
 
         # TRACK (percorso)
@@ -753,7 +756,7 @@ def default_state_payload():
     return {
         "brogliaccio": [],
         "inbox": [],
-        "squadre": {"SQUADRA 1": {"mcolor":"blue","mhex":"#3b82f6","stato": "In attesa al COC", "capo": "", "tel": "", "token": uuid.uuid4().hex}},
+        "squadre": {"SQUADRA 1": {"stato": "In attesa al COC", "capo": "", "tel": "", "token": uuid.uuid4().hex}},
         "pos_mappa": [45.7075, 11.4772],
         "op_name": "",
         "ev_data": datetime.now().date().isoformat(),
@@ -822,6 +825,7 @@ if "initialized" not in st.session_state:
     st.session_state.open_map_event = None
     st.session_state.team_edit_open = None
     st.session_state.team_qr_open = None
+
     ok = load_data_from_disk()
     if not ok:
         d = default_state_payload()
@@ -841,10 +845,6 @@ if "initialized" not in st.session_state:
 for _, info in st.session_state.squadre.items():
     if "token" not in info or not info["token"]:
         info["token"] = uuid.uuid4().hex
-
-# assicura colori a tutte le squadre (marker + pallini)
-ensure_team_colors()
-save_data_to_disk()
 
 # =========================
 # AUTO BASE URL (opzionale: streamlit-js-eval)
@@ -921,8 +921,6 @@ def delete_team(team: str) -> Tuple[bool, str]:
         st.session_state.team_edit_open = None
     if st.session_state.team_qr_open == team:
         st.session_state.team_qr_open = None
-    if st.session_state.get('team_panel_open') == team:
-        st.session_state.team_panel_open = None
     save_data_to_disk()
     return True, f"Squadra eliminata: {team}"
 
@@ -1069,6 +1067,18 @@ section[data-testid="stSidebar"] .stDownloadButton > button{
   font-weight: 950 !important;
 }
 
+/* Sidebar — lista squadre compatta */
+.pc-sqdot{
+  width: 12px; height: 12px;
+  border-radius: 999px;
+  margin-top: 10px;
+  border: 1px solid rgba(255,255,255,.35);
+  box-shadow: 0 6px 14px rgba(2,6,23,.18);
+}
+.pc-sqrow{ line-height: 1.1; padding: 2px 0; }
+.pc-sqname{ font-weight: 950; color: #f8fafc; font-size: .95rem; }
+.pc-sqsub{ font-weight: 800; color: rgba(248,250,252,.92); font-size: .74rem; margin-top: 2px; }
+
 /* NATO mini (solo sala radio) */
 .nato-title{margin-top:10px;font-weight:950;color:#0d47a1;font-size:.9rem;}
 .nato-mini{display:grid;grid-template-columns:repeat(auto-fill,minmax(74px,1fr));gap:6px;margin-top:10px;}
@@ -1098,57 +1108,95 @@ with st.sidebar:
         st.caption(f"Totale: **{len(st.session_state.squadre)}**")
 
         squadre_sorted = sorted(list(st.session_state.squadre.keys()))
+
+        # pulizia selezioni se una squadra viene rinominata/eliminata
+        if st.session_state.get("team_open") and st.session_state.team_open not in st.session_state.squadre:
+            st.session_state.team_open = None
+        if st.session_state.get("team_edit_open") and st.session_state.team_edit_open not in st.session_state.squadre:
+            st.session_state.team_edit_open = None
+        if st.session_state.get("team_qr_open") and st.session_state.team_qr_open not in st.session_state.squadre:
+            st.session_state.team_qr_open = None
+
         for team in squadre_sorted:
             inf = get_squadra_info(team)
+            hx = team_hex(team)
             capo_txt = inf["capo"] if inf["capo"] else "—"
             tel_txt = inf["tel"] if inf["tel"] else "—"
 
-            with st.expander(f"👥 {team}", expanded=(st.session_state.get("team_panel_open")==team)):
-                tc = get_team_color(team)
+            exp_open = (st.session_state.get("team_open") == team)
+            with st.expander(f"●  {team}", expanded=exp_open):
                 st.markdown(
-                    f"<div style='display:flex;align-items:center;gap:10px;margin:2px 0 8px 0;'>"
-                    f"<span style='color:{tc['mhex']};font-size:18px;line-height:1'>●</span>"
-                    f"<span style='font-weight:950;color:#f8fafc'>{team}</span>"
-                    f"</div>",
+                    f"<div style='display:flex;align-items:center;gap:10px;'>"
+                    f"<div class='pc-sqdot' style='background:{hx};margin-top:0;'></div>"
+                    f"<div style='flex:1;'>"
+                    f"<div class='pc-sqname' style='font-size:1.02rem'>{team}</div>"
+                    f"<div class='pc-sqsub'>👤 {capo_txt} · 📞 {tel_txt}</div>"
+                    f"</div></div>",
                     unsafe_allow_html=True,
                 )
-                st.markdown(chip_stato(inf["stato"]), unsafe_allow_html=True)
-                st.markdown(f"**👤 Capo:** {capo_txt}")
-                st.markdown(f"**📞 Tel:** {tel_txt}")
 
-                b1, b2 = st.columns(2)
-                if b1.button("🟧 ➜ MODIFICA", key=f"btn_edit_{team}"):
-                    st.session_state.team_panel_open = team
+                st.markdown(chip_stato(inf["stato"]), unsafe_allow_html=True)
+
+                a1, a2, a3, a4 = st.columns([1, 1, 1, 1])
+
+                # freccia/modifica in colore diverso
+                if a1.button("🟧 ➜ MODIFICA", key=f"open_edit_{team}"):
+                    st.session_state.team_open = team
                     st.session_state.team_edit_open = team
                     st.session_state.team_qr_open = None
-                    st.rerun()
-                if b2.button("📱 QR", key=f"btn_qr_{team}"):
-                    st.session_state.team_panel_open = team
-                    st.session_state.team_qr_open = team
-                    st.session_state.team_edit_open = None
+                    st.session_state["_del_arm"] = None
                     st.rerun()
 
+                if a2.button("📱 QR", key=f"open_qr_{team}"):
+                    st.session_state.team_open = team
+                    st.session_state.team_qr_open = team
+                    st.session_state.team_edit_open = None
+                    st.session_state["_del_arm"] = None
+                    st.rerun()
+
+                if a3.button("♻️ TOKEN", key=f"regen_tok_{team}"):
+                    regenerate_team_token(team)
+                    st.session_state.team_open = team
+                    st.session_state.team_qr_open = team
+                    st.session_state.team_edit_open = None
+                    st.success("Token rigenerato ✅")
+                    st.rerun()
+
+                if a4.button("🗑️ ELIMINA", key=f"del_{team}"):
+                    st.session_state.team_open = team
+                    st.session_state["_del_arm"] = team
+                    st.session_state.team_edit_open = None
+                    st.session_state.team_qr_open = None
+                    st.rerun()
+
+                # --- Modifica sotto il nome (solo se aperta) ---
                 if st.session_state.get("team_edit_open") == team:
                     st.divider()
                     st.markdown("### ✏️ Modifica squadra")
+
                     with st.form(f"form_edit_{team}"):
-                        new_name = st.text_input("Nome squadra", value=team)
-                        new_capo = st.text_input("Caposquadra", value=inf["capo"])
-                        new_tel = st.text_input("Telefono", value=inf["tel"])
-                        save = st.form_submit_button("💾 SALVA MODIFICHE")
+                        new_name = st.text_input("Nome squadra", value=team, help="Il nome viene salvato in MAIUSCOLO")
+                        new_capo = st.text_input("Caposquadra", value=inf["capo"], placeholder="Es. Rossi Mario")
+                        new_tel = st.text_input("Telefono", value=inf["tel"], placeholder="Es. 3331234567")
+                        cA, cB = st.columns(2)
+                        save = cA.form_submit_button("💾 Salva")
+                        close = cB.form_submit_button("✅ Chiudi")
+
                     if save:
                         ok, msg = update_team(team, new_name, new_capo, new_tel)
                         (st.success if ok else st.warning)(msg)
                         if ok:
+                            new_t = (new_name or "").strip().upper()
+                            st.session_state.team_open = new_t
                             st.session_state.team_edit_open = None
+                            st.session_state.team_qr_open = None
                             st.rerun()
 
-                    st.caption("Se il QR è stato condiviso per errore, rigenera il token.")
-                    if st.button("♻️ Rigenera Token", key=f"regen_{team}"):
-                        regenerate_team_token(team)
-                        st.success("Token rigenerato ✅")
+                    if close:
+                        st.session_state.team_edit_open = None
                         st.rerun()
 
+                # --- QR sotto il nome (solo se aperto) ---
                 if st.session_state.get("team_qr_open") == team:
                     st.divider()
                     st.markdown("### 📱 QR accesso caposquadra")
@@ -1171,17 +1219,21 @@ with st.sidebar:
                             key=f"dlqr_{team}",
                         )
 
-                    if st.button("❌ Chiudi QR", key=f"closeqr_{team}"):
-                        st.session_state.team_qr_open = None
-                        st.session_state.team_panel_open = None
+                # --- Conferma eliminazione (solo se armata) ---
+                if st.session_state.get("_del_arm") == team:
+                    st.divider()
+                    st.warning("Conferma eliminazione: questa azione è irreversibile.")
+                    conf = st.checkbox("Confermo eliminazione squadra", key=f"confdel_{team}")
+                    cD, cE = st.columns(2)
+                    if cD.button("✅ Conferma elimina", disabled=not conf, key=f"confirm_del_{team}"):
+                        ok, msg = delete_team(team)
+                        (st.success if ok else st.warning)(msg)
+                        st.session_state["_del_arm"] = None
+                        st.session_state.team_open = None
                         st.rerun()
-
-                st.divider()
-                conferma = st.checkbox("Confermo eliminazione squadra", key=f"confdel_{team}")
-                if st.button("🗑️ ELIMINA SQUADRA", key=f"del_{team}", disabled=not conferma):
-                    ok, msg = delete_team(team)
-                    (st.success if ok else st.warning)(msg)
-                    st.rerun()
+                    if cE.button("❌ Annulla", key=f"cancel_del_{team}"):
+                        st.session_state["_del_arm"] = None
+                        st.rerun()
 
         st.divider()
         st.markdown("## ➕ CREA SQUADRA")
@@ -1198,23 +1250,28 @@ with st.sidebar:
                 st.warning("Esiste già una squadra con questo nome.")
             else:
                 token = uuid.uuid4().hex
-                tc_new = TEAM_COLOR_PALETTE[len(st.session_state.squadre) % len(TEAM_COLOR_PALETTE)]
+                used = {(inf.get("mhex") or "").strip() for inf in st.session_state.squadre.values()}
+                used = {hx for hx in used if hx.startswith("#") and len(hx) == 7}
+                colore = _pick_next_team_color(set(used))
+
                 st.session_state.squadre[nome] = {
-                    "mcolor": tc_new[0],
-                    "mhex": tc_new[1],
                     "stato": "In attesa al COC",
                     "capo": (capo or "").strip(),
                     "tel": (tel or "").strip(),
                     "token": token,
+                    "mhex": colore,
                 }
                 save_data_to_disk()
-                st.session_state.team_panel_open = nome
+                # apri subito la scheda e mostra QR
+                st.session_state.team_open = nome
                 st.session_state.team_qr_open = nome
-                st.success("✅ Squadra creata! (QR aperto)")
+                st.session_state.team_edit_open = None
+                st.success("✅ Squadra creata! QR visibile sotto.")
                 st.rerun()
 
         st.divider()
         st.markdown("## 🌐 URL APP (per QR)")
+
         st.caption("Se hai streamlit-js-eval si compila da solo; altrimenti incolla l'URL.")
         st.session_state.BASE_URL = st.text_input(
             "Base URL Streamlit Cloud",

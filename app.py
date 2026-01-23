@@ -2197,21 +2197,27 @@ with t_rep:
     st.markdown("</div>", unsafe_allow_html=True)
 
 # =========================
-# REGISTRO EVENTI + MAPPA
+# REGISTRO EVENTI + MAPPA (FAST)
 # =========================
 st.markdown("### 📋 REGISTRO EVENTI")
 
-# (Performance) con molti interventi, limitare il numero di righe renderizzate evita blocchi UI
-_lim_opts = [100, 250, 500, 1000, "Tutti"]
-_lim = st.selectbox("Mostra nel registro:", _lim_opts, index=1, key="log_limit")
-_events = st.session_state.brogliaccio if _lim == "Tutti" else st.session_state.brogliaccio[:int(_lim)]
-if _lim != "Tutti" and len(st.session_state.brogliaccio) > int(_lim):
-    st.caption(f"Mostrati i primi **{int(_lim)}** eventi su **{len(st.session_state.brogliaccio)}** totali (per velocità).")
+# Registro: modalità tabella (molto più veloce) + dettaglio singolo
+mode_fast = st.toggle("⚡ Modalità veloce (tabella + dettaglio)", value=True, key="log_fast_mode")
 
+# Limite eventi caricati (evita rallentamenti con migliaia di righe)
+_lim_opts = [100, 250, 500, 1000, "Tutti"]
+_lim = st.selectbox("Carica eventi:", _lim_opts, index=1, key="log_limit")
+all_events = st.session_state.brogliaccio
+events_loaded = all_events if _lim == "Tutti" else all_events[:int(_lim)]
+
+if _lim != "Tutti" and len(all_events) > int(_lim):
+    st.caption(f"Caricati i primi **{int(_lim)}** eventi su **{len(all_events)}** totali (per velocità).")
+
+# Mappa evento selezionato (una alla volta)
 if st.session_state.open_map_event is not None:
     idx = st.session_state.open_map_event
-    if 0 <= idx < len(st.session_state.brogliaccio):
-        row = st.session_state.brogliaccio[idx]
+    if 0 <= idx < len(all_events):
+        row = all_events[idx]
         pos = row.get("pos")
 
         st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
@@ -2222,7 +2228,7 @@ if st.session_state.open_map_event is not None:
             folium.Marker(
                 pos,
                 tooltip=f"{row.get('sq','')} · {row.get('st','')}",
-                icon=folium.Icon(color=COLORI_STATI.get(row.get("st",""), {}).get("color", "blue")),
+                icon=folium.Icon(color=COLORI_STATI.get(row.get('st',''), {}).get('color', 'blue')),
             ).add_to(m_ev)
             st_folium(m_ev, width="100%", height=420, returned_objects=[])
         else:
@@ -2234,36 +2240,130 @@ if st.session_state.open_map_event is not None:
 
         st.markdown("</div>", unsafe_allow_html=True)
 
-for i, b in enumerate(_events):
-    gps_ok = isinstance(b.get("pos"), list) and len(b["pos"]) == 2
-    gps_t = f"GPS: {b['pos'][0]:.4f}, {b['pos'][1]:.4f}" if gps_ok else "GPS: OMISSIS"
-    a, c = call_flow_from_row(b)
-    titolo = f"{b.get('ora','')} | 📞 {a} ➜ 🎧 {c} | {b.get('sq','')} | {gps_t}"
+# -------- Modalità veloce (tabella + dettaglio) --------
+if mode_fast:
+    # Paginazione leggera
+    page_size = st.select_slider("Righe per pagina:", options=[25, 50, 100, 200], value=50, key="log_page_size")
+    total = len(events_loaded)
+    if total == 0:
+        st.info("Nessun evento nel registro.")
+    else:
+        max_pages = max(1, (total + page_size - 1) // page_size)
+        if "log_page" not in st.session_state:
+            st.session_state.log_page = 1
+        st.session_state.log_page = max(1, min(st.session_state.log_page, max_pages))
 
-    with st.expander(titolo):
-        st.markdown(chip_call_flow(b), unsafe_allow_html=True)
-        st.markdown(chip_stato(b.get("st", "")), unsafe_allow_html=True)
+        colp1, colp2, colp3 = st.columns([1, 2, 1])
+        with colp1:
+            if st.button("⬅️", disabled=(st.session_state.log_page <= 1), key="log_prev"):
+                st.session_state.log_page -= 1
+                st.rerun()
+        with colp2:
+            st.markdown(f"<div style='text-align:center; padding-top:.35rem;'><b>Pagina {st.session_state.log_page} / {max_pages}</b></div>", unsafe_allow_html=True)
+        with colp3:
+            if st.button("➡️", disabled=(st.session_state.log_page >= max_pages), key="log_next"):
+                st.session_state.log_page += 1
+                st.rerun()
 
-        sq_event = (b.get("sq") or "").strip()
-        if sq_event and sq_event in st.session_state.squadre:
-            inf = get_squadra_info(sq_event)
-            st.markdown(f"**👤 Caposquadra:** {inf['capo'] or '—'} &nbsp;&nbsp; | &nbsp;&nbsp; **📞 Tel:** {inf['tel'] or '—'}")
+        start_i = (st.session_state.log_page - 1) * page_size
+        end_i = min(total, start_i + page_size)
+        page_events = events_loaded[start_i:end_i]
 
-        st.write(
-            f"💬 **MSG:** {b.get('mit','')}  \n"
-            f"📩 **RIS:** {b.get('ris','')}  \n"
-            f"👤 **OP:** {b.get('op','')}"
+        # Tabella compatta (virtualizzata)
+        rows = []
+        for j, b in enumerate(page_events, start=start_i):
+            gps_ok = isinstance(b.get("pos"), list) and len(b["pos"]) == 2
+            a, c = call_flow_from_row(b)
+            rows.append({
+                "#": j,
+                "ORA": b.get("ora", ""),
+                "SQ": b.get("sq", ""),
+                "STATO": b.get("st", ""),
+                "DA": a,
+                "A": c,
+                "GPS": "✅" if gps_ok else "—",
+                "MSG": (b.get("mit", "") or "")[:60],
+            })
+
+        df_log = pd.DataFrame(rows)
+        st.dataframe(df_log, use_container_width=True, height=420)
+
+        # Selezione evento (dettaglio singolo, non 200 expander)
+        pick = st.number_input(
+            "Apri dettaglio evento #",
+            min_value=int(df_log["#"].min()),
+            max_value=int(df_log["#"].max()),
+            value=int(df_log["#"].min()),
+            step=1,
+            key="log_pick_idx",
         )
 
-        col_a, col_b = st.columns([1, 2])
-        if gps_ok:
-            if col_a.button("🗺️ APRI MAPPA VISIVA", key=f"open_map_{i}"):
-                st.session_state.open_map_event = i
-                st.rerun()
-            col_b.caption("Apre una mappa dedicata in alto al registro (una alla volta).")
-        else:
-            col_a.button("🗺️ MAPPA NON DISPONIBILE", key=f"no_map_{i}", disabled=True)
-            col_b.caption("Coordinate non presenti (OMISSIS).")
+        if 0 <= int(pick) < len(all_events):
+            b = all_events[int(pick)]
+            gps_ok = isinstance(b.get("pos"), list) and len(b["pos"]) == 2
+            gps_t = f"GPS: {b['pos'][0]:.4f}, {b['pos'][1]:.4f}" if gps_ok else "GPS: OMISSIS"
+            a, c = call_flow_from_row(b)
+            titolo = f"{b.get('ora','')} | 📞 {a} ➜ 🎧 {c} | {b.get('sq','')} | {gps_t}"
+
+            with st.expander(f"🔎 Dettaglio evento  #{int(pick)}  —  {titolo}", expanded=True):
+                st.markdown(chip_call_flow(b), unsafe_allow_html=True)
+                st.markdown(chip_stato(b.get("st", "")), unsafe_allow_html=True)
+
+                sq_event = (b.get("sq") or "").strip()
+                if sq_event and sq_event in st.session_state.squadre:
+                    inf = get_squadra_info(sq_event)
+                    st.markdown(f"**👤 Caposquadra:** {inf['capo'] or '—'} &nbsp;&nbsp; | &nbsp;&nbsp; **📞 Tel:** {inf['tel'] or '—'}")
+
+                st.write(
+                    f"💬 **MSG:** {b.get('mit','')}  \n"
+                    f"📩 **RIS:** {b.get('ris','')}  \n"
+                    f"👤 **OP:** {b.get('op','')}"
+                )
+
+                col_a, col_b = st.columns([1, 2])
+                if gps_ok:
+                    if col_a.button("🗺️ APRI MAPPA VISIVA", key=f"open_map_pick_{int(pick)}"):
+                        st.session_state.open_map_event = int(pick)
+                        st.rerun()
+                    col_b.caption("Apre una mappa dedicata in alto al registro (una alla volta).")
+                else:
+                    col_a.button("🗺️ MAPPA NON DISPONIBILE", key=f"no_map_pick_{int(pick)}", disabled=True)
+                    col_b.caption("Coordinate non presenti (OMISSIS).")
+
+# -------- Modalità classica (expander per evento) --------
+else:
+    _events = events_loaded
+    for i, b in enumerate(_events):
+        gps_ok = isinstance(b.get("pos"), list) and len(b["pos"]) == 2
+        gps_t = f"GPS: {b['pos'][0]:.4f}, {b['pos'][1]:.4f}" if gps_ok else "GPS: OMISSIS"
+        a, c = call_flow_from_row(b)
+        titolo = f"{b.get('ora','')} | 📞 {a} ➜ 🎧 {c} | {b.get('sq','')} | {gps_t}"
+
+        with st.expander(titolo):
+            st.markdown(chip_call_flow(b), unsafe_allow_html=True)
+            st.markdown(chip_stato(b.get("st", "")), unsafe_allow_html=True)
+
+            sq_event = (b.get("sq") or "").strip()
+            if sq_event and sq_event in st.session_state.squadre:
+                inf = get_squadra_info(sq_event)
+                st.markdown(f"**👤 Caposquadra:** {inf['capo'] or '—'} &nbsp;&nbsp; | &nbsp;&nbsp; **📞 Tel:** {inf['tel'] or '—'}")
+
+            st.write(
+                f"💬 **MSG:** {b.get('mit','')}  \n"
+                f"📩 **RIS:** {b.get('ris','')}  \n"
+                f"👤 **OP:** {b.get('op','')}"
+            )
+
+            col_a, col_b = st.columns([1, 2])
+            if gps_ok:
+                if col_a.button("🗺️ APRI MAPPA VISIVA", key=f"open_map_{i}"):
+                    st.session_state.open_map_event = i
+                    st.rerun()
+                col_b.caption("Apre una mappa dedicata in alto al registro (una alla volta).")
+            else:
+                col_a.button("🗺️ MAPPA NON DISPONIBILE", key=f"no_map_{i}", disabled=True)
+                col_b.caption("Coordinate non presenti (OMISSIS).")
+
 
 # =========================
 # RESET

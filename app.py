@@ -949,7 +949,8 @@ def default_state_payload():
         "ev_nome": "",
         "ev_desc": "",
         "BASE_URL": "",
-        "cnt_conclusi": 0,
+                "SHARE_URL": "",
+"cnt_conclusi": 0,
     }
 
 def save_data_to_disk(force: bool = False) -> bool:
@@ -968,6 +969,7 @@ def save_data_to_disk(force: bool = False) -> bool:
         "ev_nome": st.session_state.ev_nome,
         "ev_desc": st.session_state.ev_desc,
         "BASE_URL": st.session_state.get("BASE_URL", ""),
+        "SHARE_URL": st.session_state.get("SHARE_URL", ""),
         "cnt_conclusi": st.session_state.get("cnt_conclusi", 0),
     }
 
@@ -1011,6 +1013,7 @@ def load_data_from_disk():
     st.session_state.ev_nome = payload.get("ev_nome", "")
     st.session_state.ev_desc = payload.get("ev_desc", "")
     st.session_state.BASE_URL = payload.get("BASE_URL", "") or ""
+    st.session_state.SHARE_URL = payload.get("SHARE_URL", "") or ""
     st.session_state.cnt_conclusi = int(payload.get("cnt_conclusi", 0) or 0)
     ensure_inbox_ids()
     return True
@@ -1027,6 +1030,7 @@ def load_data_from_uploaded_json(file_bytes: bytes):
     st.session_state.ev_nome = payload.get("ev_nome", "")
     st.session_state.ev_desc = payload.get("ev_desc", "")
     st.session_state.BASE_URL = payload.get("BASE_URL", "") or ""
+    st.session_state.SHARE_URL = payload.get("SHARE_URL", "") or ""
     st.session_state.cnt_conclusi = int(payload.get("cnt_conclusi", 0) or 0)
     save_data_to_disk()
     ensure_inbox_ids()
@@ -1075,6 +1079,7 @@ if "initialized" not in st.session_state:
         st.session_state.ev_desc = d["ev_desc"]
         st.session_state.cnt_conclusi = 0
         st.session_state.BASE_URL = d["BASE_URL"]
+        st.session_state.SHARE_URL = d.get("SHARE_URL","")
         save_data_to_disk()
 
 # assicura token a tutte le squadre
@@ -1703,13 +1708,13 @@ with st.sidebar:
                     st.divider()
                     st.markdown("### 📱 QR accesso caposquadra")
 
-                    base_url = (st.session_state.get("BASE_URL") or "").strip().rstrip("/")
+                    share_url = (st.session_state.get("SHARE_URL") or st.session_state.get("BASE_URL") or "").strip().rstrip("/")
                     token = st.session_state.squadre[team].get("token", "")
 
-                    if not base_url.startswith("http"):
+                    if not share_url.startswith("http"):
                         st.warning("⚠️ Imposta l'URL base: https://…streamlit.app")
                     else:
-                        link = f"{base_url}/?mode=campo&team={team}&token={token}"
+                        link = f"{share_url}/?mode=campo&team={team}&token={token}"
 
                         # Link condivisibile (con pulsante copia integrato)
                         st.text_input(
@@ -1799,6 +1804,13 @@ with st.sidebar:
             value=(st.session_state.get("BASE_URL") or ""),
             placeholder="https://nome-app.streamlit.app",
             help="URL della tua app pubblicata (serve per generare i QR)."
+        ).strip()
+
+    st.session_state.SHARE_URL = st.text_input(
+            "URL pubblico per condivisione (WhatsApp/QR)",
+            value=(st.session_state.get("SHARE_URL") or ""),
+            placeholder="(opzionale) https://nome-app.streamlit.app",
+            help="Se l'URL rilevato porta ad una pagina 'Accesso protetto' o ad un portale, inserisci qui l'URL pubblico diretto dell'app. Verrà usato per WhatsApp e QR."
         ).strip()
 
     # BACKUP in fondo
@@ -2651,6 +2663,7 @@ if col_m1.button("🧹 CANCELLA TUTTI I DATI"):
     st.session_state.ev_nome = d["ev_nome"]
     st.session_state.ev_desc = d["ev_desc"]
     st.session_state.BASE_URL = d["BASE_URL"]
+    st.session_state.SHARE_URL = d.get("SHARE_URL","")
     st.session_state.open_map_event = None
     st.session_state.team_edit_open = None
     st.session_state.team_qr_open = None

@@ -866,7 +866,7 @@ def save_data_to_disk(force: bool = False) -> bool:
     try:
         tmp_path = DATA_PATH + ".tmp"
         with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, separators=(',', ':'))
+            json.dump(payload, f, ensure_ascii=False, indent=2)
         os.replace(tmp_path, DATA_PATH)
         if payload_str is not None:
             st.session_state["_last_saved_payload"] = payload_str
@@ -2005,133 +2005,86 @@ with t_rad:
             st.divider()
 
         st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
-        # (Performance) mappa senza pandas + cache (evita ricostruzione completa ad ogni rerun)
-def _map_signature(events: list, inbox: list, center: list) -> str:
-    sig = [f"{center[0]:.5f},{center[1]:.5f}"]
-    seen = set()
-    # latest points (newest->oldest)
-    if isinstance(events, list):
-        for row in events:
-            sq = (row.get("sq") or "").strip()
-            if not sq or sq in seen:
-                continue
-            pos = row.get("pos")
-            if isinstance(pos, list) and len(pos) == 2:
-                stt = (row.get("st") or "").strip()
-                sig.append(f"{sq}:{pos[0]:.5f},{pos[1]:.5f}:{stt}")
-                seen.add(sq)
-                if len(seen) >= len(st.session_state.squadre):
-                    break
-    # inbox pending (solo se squadra non già presente)
-    if isinstance(inbox, list):
-        for msg in inbox:
-            sqp = (msg.get("sq") or "").strip()
-            if not sqp or sqp in seen:
-                continue
-            posp = msg.get("pos")
-            if isinstance(posp, list) and len(posp) == 2:
-                sig.append(f"INBOX:{sqp}:{posp[0]:.5f},{posp[1]:.5f}")
-                seen.add(sqp)
-    return "|".join(sig)
-
-_events = st.session_state.brogliaccio
-_inbox = st.session_state.get("inbox", [])
-
-sig_now = _map_signature(_events, _inbox, st.session_state.pos_mappa)
-if st.session_state.get("_main_map_sig") != sig_now or st.session_state.get("_main_map_obj") is None:
-    st.session_state["_main_map_obj"] = build_folium_map_from_events(
-        _events,
-        center=st.session_state.pos_mappa,
-        zoom=14,
-        inbox=_inbox,
-    )
-    st.session_state["_main_map_sig"] = sig_now
-
-st_folium(
-    st.session_state["_main_map_obj"],
-    width="100%",
-    height=450,
-    returned_objects=[],
-    key="main_map",
-)
-
+        # (Performance) mappa senza pandas: usa direttamente brogliaccio
+        m = build_folium_map_from_events(
+            st.session_state.brogliaccio,
+            center=st.session_state.pos_mappa,
+            zoom=14,
+            inbox=st.session_state.get('inbox')
+        )
+        st_folium(m, width="100%", height=450, returned_objects=[])
         # =========================
-# NATO – Convertitore (solo sala radio)
-# =========================
+        # NATO – Convertitore (solo sala radio)
+        # =========================
+        st.markdown("<div class='nato-title'>📻 Alfabeto NATO – convertitore</div>", unsafe_allow_html=True)
 
-st.markdown(
-    "<div class='nato-title'>📻 Alfabeto NATO – convertitore</div>",
-    unsafe_allow_html=True,
-)
+        mode = st.radio(
+            "Modalità:",
+            ["Testo → NATO", "NATO → Frase"],
+            horizontal=True,
+            key="nato_mode",
+        )
 
-mode = st.radio(
-    "Modalità:",
-    ["Testo → NATO", "NATO → Frase"],
-    horizontal=True,
-    key="nato_mode",
-)
+        NATO_REV = {v.upper().replace("-", "").replace(" ", ""): k for k, v in NATO.items()}
 
-NATO_REV = {v.upper().replace("-", "").replace(" ", ""): k for k, v in NATO.items()}
-
-def _clean_token(s: str) -> str:
-    return (
-        (s or "")
-        .strip()
-        .upper()
-        .replace(".", "")
-        .replace(",", "")
-        .replace(";", "")
-        .replace(":", "")
-        .replace("|", " ")
-        .replace("/", " ")
-    )
-
-def render_nato_grid_from_text(txt: str) -> str:
-    out = []
-    for ch in (txt or ""):
-        if ch == " ":
-            out.append("<span style='opacity:.35;margin:0 6px;'>•</span>")
-            continue
-        c = ch.upper()
-        if c in NATO:
-            out.append(
-                f"<div class='nato-chip nato-spell'>"
-                f"<div class='nato-letter'>{c}</div>"
-                f"<div class='nato-word'>{NATO[c]}</div>"
-                f"</div>"
+        def _clean_token(s: str) -> str:
+            return (
+                (s or "")
+                .strip()
+                .upper()
+                .replace(".", "")
+                .replace(",", "")
+                .replace(";", "")
+                .replace(":", "")
+                .replace("|", " ")
+                .replace("/", " ")
             )
-        elif c.isdigit():
-            out.append(
-                f"<div class='nato-chip nato-spell'>"
-                f"<div class='nato-letter'>{c}</div>"
-                f"<div class='nato-word'>Numero</div>"
-                f"</div>"
+
+        def render_nato_grid_from_text(txt: str) -> str:
+            out = []
+            for ch in (txt or ""):
+                if ch == " ":
+                    out.append("<span style='opacity:.35;margin:0 6px;'>•</span>")
+                    continue
+                c = ch.upper()
+                if c in NATO:
+                    out.append(
+                        f"<div class='nato-chip nato-spell'>"
+                        f"<div class='nato-letter'>{c}</div>"
+                        f"<div class='nato-word'>{NATO[c]}</div>"
+                        f"</div>"
+                    )
+                elif c.isdigit():
+                    out.append(
+                        f"<div class='nato-chip nato-spell'>"
+                        f"<div class='nato-letter'>{c}</div>"
+                        f"<div class='nato-word'>Numero</div>"
+                        f"</div>"
+                    )
+            return "<div class='nato-mini'>" + "".join(out) + "</div>"
+
+        def nato_phrase_to_text(nato_phrase: str) -> str:
+            s = _clean_token(nato_phrase)
+            tokens = [t for t in s.split() if t]
+            out_chars = []
+            for t in tokens:
+                key = t.replace("-", "").replace(" ", "")
+                if key.isdigit():
+                    out_chars.append(key)
+                    continue
+                letter = NATO_REV.get(key)
+                if letter:
+                    out_chars.append(letter)
+                else:
+                    out_chars.append(key[:1])
+            return "".join(out_chars)
+
+        if mode == "Testo → NATO":
+            testo_nato = st.text_input(
+                "Scrivi testo / nominativo / codice",
+                placeholder="Es. DAVIDE 21 / SQUADRA ALFA",
+                key="nato_input_text",
             )
-    return "<div class='nato-mini'>" + "".join(out) + "</div>"
-
-def nato_phrase_to_text(nato_phrase: str) -> str:
-    s = _clean_token(nato_phrase)
-    tokens = [t for t in s.split() if t]
-    out_chars = []
-    for t in tokens:
-        key = t.replace("-", "").replace(" ", "")
-        if key.isdigit():
-            out_chars.append(key)
-            continue
-        letter = NATO_REV.get(key)
-        if letter:
-            out_chars.append(letter)
-        else:
-            out_chars.append(key[:1])
-    return "".join(out_chars)
-
-if mode == "Testo → NATO":
-    testo_nato = st.text_input(
-        "Scrivi testo / nominativo / codice",
-        placeholder="Es. DAVIDE 21 / SQUADRA ALFA",
-        key="nato_input_text",
-    )
-
 
             if testo_nato.strip():
                 st.markdown(render_nato_grid_from_text(testo_nato), unsafe_allow_html=True)

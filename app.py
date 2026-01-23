@@ -1173,7 +1173,7 @@ with st.sidebar:
     st.divider()
 
     if ruolo == "SALA OPERATIVA":
-        st.markdown("## ➕ SQUADRE ATTIVE")
+        st.markdown("## 👥 SQUADRE")
         st.caption(f"Totale: **{len(st.session_state.squadre)}**")
 
         squadre_sorted = sorted(list(st.session_state.squadre.keys()))
@@ -1369,20 +1369,49 @@ with st.sidebar:
         "ev_desc": st.session_state.ev_desc,
         "BASE_URL": st.session_state.get("BASE_URL", ""),
     }
-    st.download_button(
-        "📦⬇️",
-        data=json.dumps(payload_now, ensure_ascii=False, indent=2).encode("utf-8"),
-        file_name="backup_radio_manager.json",
-        mime="application/json",
-        help="Scarica un backup completo (JSON) di brogliaccio, inbox, squadre e impostazioni.",
-        use_container_width=True,
+    st.subheader("Backup dati")
+
+c1, c2 = st.columns(2)
+
+# ---- SCARICA BACKUP ----
+with c1:
+    backup_json = json.dumps(
+        {
+            "timestamp": datetime.now().isoformat(),
+            "squadre": st.session_state.get("squadre", [])
+        },
+        indent=2
     )
-    up = st.file_uploader("📦⬆️", type=["json"], help="Ripristina un backup JSON esportato dal sistema.")
-    if up is not None:
-        if st.button("🔁 RIPRISTINA ORA"):
-            load_data_from_uploaded_json(up.read())
-            st.success("Ripristino completato.")
-            st.rerun()
+
+    st.download_button(
+        label="📦⬇️",
+        data=backup_json,
+        file_name="backup_squadre.json",
+        mime="application/json",
+        help="Scarica backup JSON"
+    )
+
+# ---- RIPRISTINA BACKUP ----
+with c2:
+    uploaded_file = st.file_uploader(
+        "📦⬆️",
+        type=["json"],
+        label_visibility="collapsed",
+        help="Ripristina backup JSON"
+    )
+
+    if uploaded_file is not None:
+        try:
+            dati = json.load(uploaded_file)
+            if "squadre" in dati:
+                st.session_state.squadre = dati["squadre"]
+                st.success("Backup ripristinato correttamente")
+                st.rerun()
+            else:
+                st.error("File di backup non valido")
+        except Exception:
+            st.error("Errore nel file JSON")
+
 
 # =========================
 # HEADER
@@ -1854,3 +1883,28 @@ if col_m1.button("🧹 CANCELLA TUTTI I DATI"):
 if col_m2.button("💾 SALVA ORA SU DISCO"):
     save_data_to_disk()
     st.success("Salvato.")
+st.markdown("""
+<style>
+/* NASCONDE QUALSIASI FRECCIA / SVG ORIGINALE */
+div[data-testid="stExpander"] summary svg,
+div[data-testid="stExpander"] summary span {
+    display: none !important;
+}
+
+/* ICONA CUSTOM: + */
+div[data-testid="stExpander"] summary::before {
+    content: "+";
+    color: #ffb300;
+    font-weight: 900;
+    font-size: 1.4rem;
+    margin-right: 0.6rem;
+    line-height: 1;
+}
+
+/* ICONA CUSTOM: - quando aperto */
+div[data-testid="stExpander"][open] summary::before {
+    content: "−";
+}
+</style>
+""", unsafe_allow_html=True)
+

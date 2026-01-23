@@ -1088,27 +1088,57 @@ section[data-testid="stSidebar"] .stDownloadButton > button{
 @media print{.nato-title,.nato-mini,.nato-spell{display:none!important;}}
 
 
-/* Expander: sostituisce la freccia con + / - (visibile anche su sfondi scuri) */
-div[data-testid="stExpander"] [data-testid="stExpanderToggleIcon"]{
+/* Expander: sostituisce la freccia con + / - e nasconde la freccia originale (anche se cambia DOM) */
+div[data-testid="stExpander"] [data-testid="stExpanderToggleIcon"],
+div[data-testid="stExpander"] summary svg,
+div[data-testid="stExpander"] summary [data-testid="stExpanderToggleIcon"],
+div[data-testid="stExpander"] summary span[aria-hidden="true"]{
   display: none !important;   /* nasconde la freccia originale */
 }
+
+/* Header expander in sidebar: NON deve diventare bianco quando aperto */
+section[data-testid="stSidebar"] div[data-testid="stExpander"] summary{
+  background: linear-gradient(180deg, rgba(30,41,59,.55), rgba(15,23,42,.35)) !important;
+  border: 1px solid rgba(255,255,255,.10) !important;
+  border-radius: 16px !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stExpander"][open] summary{
+  background: linear-gradient(180deg, rgba(30,41,59,.60), rgba(15,23,42,.40)) !important;
+  border-color: rgba(255,255,255,.14) !important;
+}
+
 div[data-testid="stExpander"] summary{
   position: relative !important;
-  padding-left: 1.8rem !important; /* spazio per + / - */
+  padding-left: 2.1rem !important; /* spazio per + / - */
 }
 div[data-testid="stExpander"] summary::before{
   content: "+" !important;
   position: absolute !important;
-  left: .35rem !important;
+  left: .55rem !important;
   top: 50% !important;
   transform: translateY(-50%) !important;
   color: #ffb300 !important;
   font-weight: 950 !important;
-  font-size: 1.25rem !important;
+  font-size: 1.35rem !important;
   line-height: 1 !important;
 }
 div[data-testid="stExpander"][open] summary::before{
   content: "−" !important;
+}
+
+/* Download QR: bottone più largo/alto e solo icone */
+section[data-testid="stSidebar"] div[data-testid="stDownloadButton"] button{
+  width: 2.75rem !important;
+  height: 2.75rem !important;
+  padding: 0 !important;
+  border-radius: 14px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stDownloadButton"] button span{
+  font-size: 1.15rem !important;
+  line-height: 1 !important;
 }
 
 /* Sidebar: bottoni azione solo icone (stessa dimensione) */
@@ -1256,7 +1286,7 @@ with st.sidebar:
                         png = qr_png_bytes(link)
                         st.image(png, width=230)
                         st.download_button(
-                            "⬇️ Scarica QR (PNG)",
+                            "⬇️📱",
                             data=png,
                             file_name=f"QR_{team.replace(' ', '_')}.png",
                             mime="image/png",

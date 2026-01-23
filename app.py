@@ -1357,6 +1357,7 @@ with st.sidebar:
     # BACKUP in fondo
     st.divider()
     st.markdown("## 💾 Backup / Ripristino")
+
     payload_now = {
         "brogliaccio": st.session_state.brogliaccio,
         "inbox": st.session_state.inbox,
@@ -1369,6 +1370,8 @@ with st.sidebar:
         "ev_desc": st.session_state.ev_desc,
         "BASE_URL": st.session_state.get("BASE_URL", ""),
     }
+
+    # 📦⬇️ Scarica
     st.download_button(
         "📦⬇️",
         data=json.dumps(payload_now, ensure_ascii=False, indent=2).encode("utf-8"),
@@ -1377,12 +1380,23 @@ with st.sidebar:
         help="Scarica un backup completo (JSON) di brogliaccio, inbox, squadre e impostazioni.",
         use_container_width=True,
     )
-    up = st.file_uploader("📦⬆️", type=["json"], help="Ripristina un backup JSON esportato dal sistema.")
+
+    # 📦⬆️ Ripristina (funziona appena carichi il file — nessun bottone extra)
+    up = st.file_uploader(
+        "📦⬆️",
+        type=["json"],
+        key="restore_backup_json",
+        label_visibility="collapsed",
+        help="Carica un backup JSON esportato dal sistema: il ripristino parte automaticamente.",
+    )
+
     if up is not None:
-        if st.button("🔁 RIPRISTINA ORA"):
-            load_data_from_uploaded_json(up.read())
-            st.success("Ripristino completato.")
+        try:
+            load_data_from_uploaded_json(up.getvalue())
+            st.success("✅ Ripristino completato.")
             st.rerun()
+        except Exception:
+            st.error("❌ Backup non valido o file corrotto.")
 
 # =========================
 # HEADER

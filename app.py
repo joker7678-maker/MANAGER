@@ -6,6 +6,7 @@ from streamlit_folium import st_folium
 import os
 import base64
 import json
+import hashlib
 import uuid
 import qrcode
 from io import BytesIO
@@ -117,23 +118,29 @@ def chip_call_flow(row: dict) -> str:
     return f"<div class='pc-flow'>📞 <b>{a}</b> <span class='pc-arrow'>➜</span> 🎧 <b>{b}</b></div>"
 
 def build_folium_map_from_df(df: pd.DataFrame, center: list, zoom: int = 13) -> folium.Map:
+    # Più veloce: con tanti eventi consideriamo solo l’ultimo record per squadra
     m = folium.Map(location=center, zoom_start=zoom)
-    ultime_pos = {}
-    if not df.empty:
-        for _, row in df.iterrows():
-            pos = row.get("pos")
-            sq = row.get("sq")
-            stt = row.get("st")
-            if isinstance(pos, list) and len(pos) == 2:
-                ultime_pos[sq] = {"pos": pos, "st": stt}
 
-    for sq, info in ultime_pos.items():
-        stt = info["st"]
-        folium.Marker(
-            info["pos"],
-            tooltip=f"{sq}: {stt}",
-            icon=folium.Icon(color=COLORI_STATI.get(stt, {}).get("color", "blue")),
-        ).add_to(m)
+    if df is None or df.empty:
+        return m
+
+    # df è tipicamente newest -> oldest: prendiamo il primo per ogni squadra
+    try:
+        df_last = df.drop_duplicates(subset=["sq"], keep="first")
+    except Exception:
+        df_last = df
+
+    for _, row in df_last.iterrows():
+        pos = row.get("pos")
+        sq = row.get("sq")
+        stt = row.get("st")
+        if isinstance(pos, list) and len(pos) == 2:
+            folium.Marker(
+                pos,
+                tooltip=f"{sq}: {stt}",
+                icon=folium.Icon(color=COLORI_STATI.get(stt, {}).get("color", "blue")),
+            ).add_to(m)
+
     return m
 
 def df_for_report(df: pd.DataFrame) -> pd.DataFrame:
@@ -719,8 +726,7 @@ def default_state_payload():
         "BASE_URL": "",
     }
 
-def save_data_to_disk(force: bool = False):
-    """Salva su disco solo se i dati sono cambiati (riduce blocchi con molti eventi)."""
+def save_data_to_disk():
     payload = {
         "brogliaccio": st.session_state.brogliaccio,
         "inbox": st.session_state.inbox,
@@ -733,19 +739,24 @@ def save_data_to_disk(force: bool = False):
         "ev_desc": st.session_state.ev_desc,
         "BASE_URL": st.session_state.get("BASE_URL", ""),
     }
-    # firma leggera
+
+    # Salva su disco solo se i dati sono cambiati (evita blocchi con tanti eventi)
     try:
-        sig = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+        payload_str = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        payload_hash = hashlib.md5(payload_str.encode("utf-8")).hexdigest()
     except Exception:
-        sig = str(payload)
+        payload_hash = None
 
-    last_sig = st.session_state.get("_last_saved_sig")
-    if (not force) and last_sig == sig:
-        return
+    last_hash = st.session_state.get("_last_payload_hash")
+    if payload_hash and last_hash == payload_hash:
+        return  # nessuna modifica
 
-    st.session_state["_last_saved_sig"] = sig
     with open(DATA_PATH, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
+
+    if payload_hash:
+        st.session_state["_last_payload_hash"] = payload_hash
+
 
 def load_data_from_disk():
     if not os.path.exists(DATA_PATH):
@@ -1634,9 +1645,6 @@ with t_rep:
 # =========================
 st.markdown("### 📋 REGISTRO EVENTI")
 
-# Prestazioni: con molti eventi, mostrare tutto rallenta. Limita la lista (puoi aumentare quando serve).
-max_eventi = st.number_input("Quanti eventi mostrare nel registro", min_value=50, max_value=5000, value=250, step=50, help="Riduci questo valore se la pagina si blocca con tanti interventi.")
-
 if st.session_state.open_map_event is not None:
     idx = st.session_state.open_map_event
     if 0 <= idx < len(st.session_state.brogliaccio):
@@ -1653,7 +1661,7 @@ if st.session_state.open_map_event is not None:
                 tooltip=f"{row.get('sq','')} · {row.get('st','')}",
                 icon=folium.Icon(color=COLORI_STATI.get(row.get("st",""), {}).get("color", "blue")),
             ).add_to(m_ev)
-            st_folium(m_ev, width="100%", height=420, returned_objects=[])
+            st_folium(m_ev, width="100%", height=420)
         else:
             st.info("Evento senza coordinate GPS (OMISSIS).")
 
@@ -1663,11 +1671,16 @@ if st.session_state.open_map_event is not None:
 
         st.markdown("</div>", unsafe_allow_html=True)
 
+# --- Performance: limita rendering registro con molti eventi ---
+_total_ev = len(st.session_state.brogliaccio)
+_show_opts = [100, 250, 500, 1000, "Tutti"]
+_default_idx = 1 if _total_ev > 250 else (0 if _total_ev > 100 else 4)
+_show_n = st.selectbox("Mostra eventi nel registro", _show_opts, index=_default_idx)
+brog_view = st.session_state.brogliaccio if _show_n == "Tutti" else st.session_state.brogliaccio[: int(_show_n)]
+if _show_n != "Tutti" and _total_ev > int(_show_n):
+    st.caption(f"Mostrati {int(_show_n)} di {_total_ev} eventi (per velocità).")
 
-if len(st.session_state.brogliaccio) > int(max_eventi):
-    st.info(f"Mostro gli ultimi {int(max_eventi)} eventi su {len(st.session_state.brogliaccio)} totali (per prestazioni).")
-
-for i, b in enumerate(st.session_state.brogliaccio[:int(max_eventi)]):
+for i, b in enumerate(brog_view):
     gps_ok = isinstance(b.get("pos"), list) and len(b["pos"]) == 2
     gps_t = f"GPS: {b['pos'][0]:.4f}, {b['pos'][1]:.4f}" if gps_ok else "GPS: OMISSIS"
     a, c = call_flow_from_row(b)

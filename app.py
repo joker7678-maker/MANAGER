@@ -1040,6 +1040,35 @@ section[data-testid="stSidebar"] textarea{
   border-radius: 12px !important;
   font-weight: 800 !important;
 }
+
+/* File uploader (sidebar): nasconde la scheda "Drag and drop..." e rende il box compatto */
+section[data-testid="stSidebar"] div[data-testid="stFileUploaderDropzoneInstructions"],
+section[data-testid="stSidebar"] div[data-testid="stFileUploaderDropzoneInstructions"] *{
+  display: none !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stFileUploaderDropzone"]{
+  padding: .35rem .45rem !important;
+  min-height: 48px !important;
+  border-radius: 12px !important;
+  background: rgba(255,255,255,.10) !important;
+  border: 1px solid rgba(255,255,255,.22) !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stFileUploaderDropzone"]:hover{
+  border-color: rgba(255,255,255,.35) !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stFileUploaderDropzone"] button{
+  padding: .35rem .6rem !important;
+  border-radius: 10px !important;
+  font-weight: 950 !important;
+}
+
+/* Bottone del file-uploader: solo icona (contraria al download) */
+section[data-testid="stSidebar"] div[data-testid="stFileUploaderDropzone"] button span{ display:none !important; }
+section[data-testid="stSidebar"] div[data-testid="stFileUploaderDropzone"] button::before{
+  content: "📦⬆️";
+  font-size: 1.15rem;
+  line-height: 1;
+}
 section[data-testid="stSidebar"] div[data-baseweb="select"] > div{
   background: #ffffff !important;
   border: 1px solid rgba(15,23,42,.22) !important;

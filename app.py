@@ -1048,115 +1048,147 @@ with st.sidebar:
         st.markdown("## 👥 SQUADRE")
         st.caption(f"Totale: **{len(st.session_state.squadre)}**")
 
-        # Lista compatta (icone allineate a fianco al nome)
+        # Lista squadre: schede (expander) con bottoni; la modifica compare sotto il nome squadra
+        def _status_emoji(stato: str) -> str:
+            s = (stato or "").lower()
+            if "conclus" in s or "rientrat" in s:
+                return "🟢"
+            if "rientro" in s:
+                return "🟠"
+            if "corso" in s or "uscita" in s:
+                return "🔴"
+            if "arrivat" in s:
+                return "🔵"
+            if "attesa" in s:
+                return "⚪"
+            return "⚫"
+
+        if "team_edit_open" not in st.session_state:
+            st.session_state.team_edit_open = None
+        if "team_qr_open" not in st.session_state:
+            st.session_state.team_qr_open = None
+        if "_del_arm" not in st.session_state:
+            st.session_state._del_arm = None
+
         squadre_sorted = sorted(list(st.session_state.squadre.keys()))
         for team in squadre_sorted:
             inf = get_squadra_info(team)
-            stato_hex = COLORI_STATI.get(inf["stato"], {}).get("hex", "#e2e8f0")
             capo_txt = inf["capo"] if inf["capo"] else "—"
             tel_txt = inf["tel"] if inf["tel"] else "—"
+            emoji = _status_emoji(inf["stato"])
 
-            c0, c1, c2 = st.columns([0.18, 1.0, 0.42], gap="small")
-            c0.markdown(
-                f"<div class='pc-sqdot' style='background:{stato_hex};'></div>",
-                unsafe_allow_html=True,
-            )
-            c1.markdown(
-                f"<div class='pc-sqrow'><div class='pc-sqname'>{team}</div>"
-                f"<div class='pc-sqsub'>👤 {capo_txt} · 📞 {tel_txt}</div></div>",
-                unsafe_allow_html=True,
-            )
-            b_edit, b_qr = c2.columns(2, gap="small")
-            if b_edit.button("✏️", key=f"btn_edit_{team}"):
-                st.session_state.team_edit_open = team
-                st.session_state.team_qr_open = None
-                st.rerun()
-            if b_qr.button("📱", key=f"btn_qr_{team}"):
-                st.session_state.team_qr_open = team
-                st.session_state.team_edit_open = None
-                st.rerun()
+            with st.expander(f"{emoji} {team}", expanded=(st.session_state.team_edit_open == team)):
+                st.markdown(chip_stato(inf["stato"]), unsafe_allow_html=True)
+                st.caption(f"👤 {capo_txt}   ·   📞 {tel_txt}")
 
-        # Gestione squadra: si apre cliccando ✏️ (niente selezione)
-        st.divider()
-        st.markdown("## 🧰 Gestione squadra")
-
-        team_sel = st.session_state.get("team_edit_open")
-        if team_sel and team_sel not in st.session_state.squadre:
-            team_sel = None
-            st.session_state.team_edit_open = None
-
-        if not team_sel:
-            st.info("Clicca **✏️** a fianco di una squadra per aprire la modifica.")
-        else:
-            inf = get_squadra_info(team_sel)
-            st.markdown(chip_stato(inf["stato"]), unsafe_allow_html=True)
-
-            with st.form("form_team_manage"):
-                new_name = st.text_input("Nome squadra", value=team_sel, help="Il nome viene salvato in MAIUSCOLO")
-                new_capo = st.text_input("Caposquadra", value=inf["capo"], placeholder="Es. Rossi Mario")
-                new_tel = st.text_input("Telefono", value=inf["tel"], placeholder="Es. 3331234567")
-                s1, s2 = st.columns(2)
-                save = s1.form_submit_button("💾 Salva")
-                open_qr = s2.form_submit_button("📱 Apri QR")
-
-            if save:
-                ok, msg = update_team(team_sel, new_name, new_capo, new_tel)
-                (st.success if ok else st.warning)(msg)
-                if ok:
-                    st.session_state.team_edit_open = (new_name or "").strip().upper()
+                a1, a2, a3 = st.columns([1, 1, 1], gap="small")
+                if a1.button("✏️ Modifica", key=f"team_edit_btn_{team}"):
+                    st.session_state.team_edit_open = team
                     st.session_state.team_qr_open = None
+                    st.session_state._del_arm = None
                     st.rerun()
-
-            if open_qr:
-                st.session_state.team_qr_open = team_sel
-                st.rerun()
-
-            st.caption("Se il QR è stato condiviso per errore, rigenera il token.")
-            ctk1, ctk2 = st.columns(2)
-            if ctk1.button("♻️ Rigenera token", key="regen_token_manage"):
-                regenerate_team_token(team_sel)
-                st.success("Token rigenerato ✅")
-                st.session_state.team_qr_open = team_sel
-                st.rerun()
-
-            if ctk2.button("🗑️ Elimina", key="delete_team_manage"):
-                st.session_state["_del_arm"] = team_sel
-
-            if st.session_state.get("_del_arm") == team_sel:
-                st.warning("Conferma eliminazione: questa azione è irreversibile.")
-                conf = st.checkbox("Confermo eliminazione squadra", key="confdel_manage")
-                if st.button("✅ Conferma elimina", disabled=not conf, key="confirm_delete_manage"):
-                    ok, msg = delete_team(team_sel)
-                    (st.success if ok else st.warning)(msg)
-                    st.session_state["_del_arm"] = None
+                if a2.button("📱 QR", key=f"team_qr_btn_{team}"):
+                    st.session_state.team_qr_open = team
                     st.session_state.team_edit_open = None
-                    st.session_state.team_qr_open = None
+                    st.session_state._del_arm = None
                     st.rerun()
-                if st.button("❌ Annulla", key="cancel_delete_manage"):
-                    st.session_state["_del_arm"] = None
+                if a3.button("↩️ Chiudi", key=f"team_close_btn_{team}"):
+                    if st.session_state.team_edit_open == team:
+                        st.session_state.team_edit_open = None
+                    if st.session_state.team_qr_open == team:
+                        st.session_state.team_qr_open = None
+                    if st.session_state._del_arm == team:
+                        st.session_state._del_arm = None
                     st.rerun()
 
-            if st.session_state.get("team_qr_open") == team_sel:
-                st.divider()
-                st.markdown("### 📱 QR accesso caposquadra")
+                # --- MODIFICA INLINE (sotto al nome) ---
+                if st.session_state.team_edit_open == team:
+                    st.markdown("**✏️ Modifica squadra**")
+                    with st.form(f"form_team_manage_{team}"):
+                        new_name = st.text_input(
+                            "Nome squadra",
+                            value=team,
+                            help="Il nome viene salvato in MAIUSCOLO",
+                            key=f"edit_name_{team}",
+                        )
+                        new_capo = st.text_input(
+                            "Caposquadra",
+                            value=inf["capo"],
+                            placeholder="Es. Rossi Mario",
+                            key=f"edit_capo_{team}",
+                        )
+                        new_tel = st.text_input(
+                            "Telefono",
+                            value=inf["tel"],
+                            placeholder="Es. 3331234567",
+                            key=f"edit_tel_{team}",
+                        )
+                        s1, s2 = st.columns(2)
+                        save = s1.form_submit_button("💾 Salva")
+                        close = s2.form_submit_button("✅ Chiudi")
 
-                base_url = (st.session_state.get("BASE_URL") or "").strip().rstrip("/")
-                token = st.session_state.squadre[team_sel].get("token", "")
+                    if save:
+                        ok, msg = update_team(team, new_name, new_capo, new_tel)
+                        (st.success if ok else st.warning)(msg)
+                        if ok:
+                            st.session_state.team_edit_open = None
+                            st.session_state.team_qr_open = None
+                            st.session_state._del_arm = None
+                            st.rerun()
 
-                if not base_url.startswith("http"):
-                    st.warning("⚠️ Imposta l'URL base: https://…streamlit.app")
-                else:
-                    link = f"{base_url}/?mode=campo&team={team_sel}&token={token}"
-                    st.code(link, language="text")
-                    png = qr_png_bytes(link)
-                    st.image(png, width=230)
-                    st.download_button(
-                        "⬇️ Scarica QR (PNG)",
-                        data=png,
-                        file_name=f"QR_{team_sel.replace(' ', '_')}.png",
-                        mime="image/png",
-                        key=f"dlqr_{team_sel}",
-                    )
+                    if close:
+                        st.session_state.team_edit_open = None
+                        st.rerun()
+
+                    st.caption("Se il QR è stato condiviso per errore, rigenera il token.")
+                    r1, r2, r3 = st.columns([1, 1, 1], gap="small")
+                    if r1.button("♻️ Rigenera token", key=f"regen_token_{team}"):
+                        regenerate_team_token(team)
+                        st.success("Token rigenerato ✅")
+                        st.session_state.team_qr_open = team
+                        st.rerun()
+                    if r2.button("🗑️ Elimina", key=f"delete_team_{team}"):
+                        st.session_state._del_arm = team
+                        st.rerun()
+                    if r3.button("📱 Apri QR", key=f"open_qr_from_edit_{team}"):
+                        st.session_state.team_qr_open = team
+                        st.rerun()
+
+                # --- CONFERMA ELIMINAZIONE ---
+                if st.session_state.get("_del_arm") == team:
+                    st.warning("Conferma eliminazione: questa azione è irreversibile.")
+                    conf = st.checkbox("Confermo eliminazione squadra", key=f"confdel_{team}")
+                    d1, d2 = st.columns(2)
+                    if d1.button("✅ Conferma elimina", disabled=not conf, key=f"confirm_delete_{team}"):
+                        ok, msg = delete_team(team)
+                        (st.success if ok else st.warning)(msg)
+                        st.session_state._del_arm = None
+                        st.session_state.team_edit_open = None
+                        st.session_state.team_qr_open = None
+                        st.rerun()
+                    if d2.button("❌ Annulla", key=f"cancel_delete_{team}"):
+                        st.session_state._del_arm = None
+                        st.rerun()
+
+                # --- QR INLINE ---
+                if st.session_state.get("team_qr_open") == team:
+                    st.markdown("**📱 QR accesso caposquadra**")
+                    base_url = (st.session_state.get("BASE_URL") or "").strip().rstrip("/")
+                    token = st.session_state.squadre[team].get("token", "")
+                    if not base_url.startswith("http"):
+                        st.warning("⚠️ Imposta l'URL base: https://…streamlit.app")
+                    else:
+                        link = f"{base_url}/?mode=campo&team={team}&token={token}"
+                        st.code(link, language="text")
+                        png = qr_png_bytes(link)
+                        st.image(png, width=230)
+                        st.download_button(
+                            "⬇️ Scarica QR (PNG)",
+                            data=png,
+                            file_name=f"QR_{team.replace(' ', '_')}.png",
+                            mime="image/png",
+                            key=f"dlqr_{team}",
+                        )
         st.divider()
         st.markdown("## ➕ CREA SQUADRA")
         with st.form("form_add_team", clear_on_submit=True):

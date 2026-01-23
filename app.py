@@ -153,37 +153,6 @@ def call_flow_from_row(row: dict) -> Tuple[str, str]:
         return "SALA OPERATIVA", (sq if sq else "—")
     return (sq if sq else "SQUADRA"), "SALA OPERATIVA"
 
-
-@st.cache_data(show_spinner=False)
-def _light_log_from_json(events_json: str) -> List[Dict[str, Any]]:
-    """Build a lightweight view of the log (fast table) from brogliaccio JSON.
-    Keeps only tiny fields to avoid re-render slowness when brogliaccio grows.
-    """
-    try:
-        events = json.loads(events_json)
-    except Exception:
-        return []
-    out: List[Dict[str, Any]] = []
-    for i, e in enumerate(events):
-        if not isinstance(e, dict):
-            continue
-        pos = e.get("pos")
-        out.append({
-            "idx": i,
-            "ora": e.get("ora", ""),
-            "sq": e.get("sq", ""),
-            "st": e.get("st", ""),
-            "chi": (e.get("chi") or ""),
-            "gps": isinstance(pos, list) and len(pos) == 2,
-            "msg": ((e.get("mit") or "")[:60]),
-        })
-    return out
-
-def _get_light_log(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    # stable JSON for cache key
-    events_json = json.dumps(events, ensure_ascii=False, separators=(",", ":"))
-    return _light_log_from_json(events_json)
-
 def chip_call_flow(row: dict) -> str:
     a, b = call_flow_from_row(row)
     return f"<div class='pc-flow'>📞 <b>{a}</b> <span class='pc-arrow'>➜</span> 🎧 <b>{b}</b></div>"
@@ -866,13 +835,6 @@ def default_state_payload():
     }
 
 def save_data_to_disk(force: bool = False) -> bool:
-    # Coalesce multiple save calls inside the same Streamlit run (approve loops, multiple buttons, etc.)
-    if (not force) and st.session_state.get('_saved_this_run', False):
-        return False
-
-    # Mark as saved for this run; actual save happens once per rerun
-    st.session_state['_saved_this_run'] = True
-
     """Salva su disco solo se i dati sono cambiati (riduce blocchi con tanti interventi).
 
     Ritorna True se ha scritto su disco, False se non era necessario.
@@ -890,16 +852,28 @@ def save_data_to_disk(force: bool = False) -> bool:
         "BASE_URL": st.session_state.get("BASE_URL", ""),
         "cnt_conclusi": st.session_state.get("cnt_conclusi", 0),
     }
+
+    # Serializzazione stabile per confronto rapido
+    try:
+        payload_str = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    except Exception:
+        payload_str = None
+
+    if not force and payload_str is not None:
+        if st.session_state.get("_last_saved_payload") == payload_str:
+            return False
+
     try:
         tmp_path = DATA_PATH + ".tmp"
         with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
+            json.dump(payload, f, ensure_ascii=False, separators=(',', ':'))
         os.replace(tmp_path, DATA_PATH)
         if payload_str is not None:
             st.session_state["_last_saved_payload"] = payload_str
         return True
     except Exception:
         return False
+
 def load_data_from_disk():
     if not os.path.exists(DATA_PATH):
         return False
@@ -1000,15 +974,9 @@ if not st.session_state.get("field_ok"):
         _mtime = os.path.getmtime(DATA_PATH) if os.path.exists(DATA_PATH) else None
         if _mtime and st.session_state.get("_data_mtime") != _mtime:
             load_data_from_disk()
-
             st.session_state._data_mtime = _mtime
     except Exception:
         pass
-
-# --- Performance: run counter to avoid multiple disk writes in the same rerun ---
-st.session_state['_run_counter'] = st.session_state.get('_run_counter', 0) + 1
-st.session_state['_saved_this_run'] = False
-
 
 # =========================
 # AUTO BASE URL (opzionale: streamlit-js-eval)
@@ -1608,9 +1576,7 @@ with st.sidebar:
                     st.divider()
                     st.markdown("### 📱 QR accesso caposquadra")
 
-                    base_url = (st.session_state.get("BASE_URL") or "").strip()
-                    # rimuove eventuali query e slash finali
-                    base_url = base_url.split("?")[0].rstrip("/")
+                    base_url = (st.session_state.get("BASE_URL") or "").strip().rstrip("/")
                     token = st.session_state.squadre[team].get("token", "")
 
                     if not base_url.startswith("http"):
@@ -1626,7 +1592,7 @@ with st.sidebar:
                         )
 
                         # Link rapido WhatsApp (utile da PC o da telefono)
-                        wa_text = urllib.parse.quote(link)
+                        wa_text = urllib.parse.quote(f"Link modulo caposquadra ({team}): {link}")
                         st.markdown(
                             f"<a href='https://wa.me/?text={wa_text}' target='_blank' "
                             f"style='text-decoration:none;'>"
@@ -2039,14 +2005,56 @@ with t_rad:
             st.divider()
 
         st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
-        # (Performance) mappa senza pandas: usa direttamente brogliaccio
-        m = build_folium_map_from_events(
-            st.session_state.brogliaccio,
-            center=st.session_state.pos_mappa,
-            zoom=14,
-            inbox=st.session_state.get('inbox')
-        )
-        st_folium(m, width="100%", height=450, returned_objects=[])
+        # (Performance) mappa senza pandas + cache (evita ricostruzione completa ad ogni rerun)
+def _map_signature(events: list, inbox: list, center: list) -> str:
+    sig = [f"{center[0]:.5f},{center[1]:.5f}"]
+    seen = set()
+    # latest points (newest->oldest)
+    if isinstance(events, list):
+        for row in events:
+            sq = (row.get("sq") or "").strip()
+            if not sq or sq in seen:
+                continue
+            pos = row.get("pos")
+            if isinstance(pos, list) and len(pos) == 2:
+                stt = (row.get("st") or "").strip()
+                sig.append(f"{sq}:{pos[0]:.5f},{pos[1]:.5f}:{stt}")
+                seen.add(sq)
+                if len(seen) >= len(st.session_state.squadre):
+                    break
+    # inbox pending (solo se squadra non già presente)
+    if isinstance(inbox, list):
+        for msg in inbox:
+            sqp = (msg.get("sq") or "").strip()
+            if not sqp or sqp in seen:
+                continue
+            posp = msg.get("pos")
+            if isinstance(posp, list) and len(posp) == 2:
+                sig.append(f"INBOX:{sqp}:{posp[0]:.5f},{posp[1]:.5f}")
+                seen.add(sqp)
+    return "|".join(sig)
+
+_events = st.session_state.brogliaccio
+_inbox = st.session_state.get("inbox", [])
+
+sig_now = _map_signature(_events, _inbox, st.session_state.pos_mappa)
+if st.session_state.get("_main_map_sig") != sig_now or st.session_state.get("_main_map_obj") is None:
+    st.session_state["_main_map_obj"] = build_folium_map_from_events(
+        _events,
+        center=st.session_state.pos_mappa,
+        zoom=14,
+        inbox=_inbox,
+    )
+    st.session_state["_main_map_sig"] = sig_now
+
+st_folium(
+    st.session_state["_main_map_obj"],
+    width="100%",
+    height=450,
+    returned_objects=[],
+    key="main_map",
+)
+
         # =========================
         # NATO – Convertitore (solo sala radio)
         # =========================
@@ -2242,10 +2250,8 @@ mode_fast = st.toggle("⚡ Modalità veloce (tabella + dettaglio)", value=True, 
 _lim_opts = [100, 250, 500, 1000, "Tutti"]
 _lim = st.selectbox("Carica eventi:", _lim_opts, index=1, key="log_limit")
 all_events = st.session_state.brogliaccio
-# Lightweight cached log for fast table rendering (avoids iterating heavy dicts with photos etc.)
-light_events = _get_light_log(all_events)
+events_loaded = all_events if _lim == "Tutti" else all_events[:int(_lim)]
 
-events_loaded = light_events if _lim == "Tutti" else light_events[:int(_lim)]
 if _lim != "Tutti" and len(all_events) > int(_lim):
     st.caption(f"Caricati i primi **{int(_lim)}** eventi su **{len(all_events)}** totali (per velocità).")
 
@@ -2307,10 +2313,9 @@ if mode_fast:
 
         # Tabella compatta (virtualizzata)
         rows = []
-        for _k, b in enumerate(page_events, start=start_i):
-            j = int(b.get("idx", _k))
-            gps_ok = bool(b.get("gps", False))
-            a, c = call_flow_from_row({"chi": b.get("chi", ""), "sq": b.get("sq", "")})
+        for j, b in enumerate(page_events, start=start_i):
+            gps_ok = isinstance(b.get("pos"), list) and len(b["pos"]) == 2
+            a, c = call_flow_from_row(b)
             rows.append({
                 "#": j,
                 "ORA": b.get("ora", ""),
@@ -2319,7 +2324,7 @@ if mode_fast:
                 "DA": a,
                 "A": c,
                 "GPS": "✅" if gps_ok else "—",
-                "MSG": b.get("msg", ""),
+                "MSG": (b.get("mit", "") or "")[:60],
             })
 
         df_log = pd.DataFrame(rows)

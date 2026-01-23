@@ -866,6 +866,13 @@ def default_state_payload():
     }
 
 def save_data_to_disk(force: bool = False) -> bool:
+    # Coalesce multiple save calls inside the same Streamlit run (approve loops, multiple buttons, etc.)
+    if (not force) and st.session_state.get('_saved_this_run', False):
+        return False
+
+    # Mark as saved for this run; actual save happens once per rerun
+    st.session_state['_saved_this_run'] = True
+
     """Salva su disco solo se i dati sono cambiati (riduce blocchi con tanti interventi).
 
     Ritorna True se ha scritto su disco, False se non era necessario.
@@ -883,17 +890,6 @@ def save_data_to_disk(force: bool = False) -> bool:
         "BASE_URL": st.session_state.get("BASE_URL", ""),
         "cnt_conclusi": st.session_state.get("cnt_conclusi", 0),
     }
-
-    # Serializzazione stabile per confronto rapido
-    try:
-        payload_str = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    except Exception:
-        payload_str = None
-
-    if not force and payload_str is not None:
-        if st.session_state.get("_last_saved_payload") == payload_str:
-            return False
-
     try:
         tmp_path = DATA_PATH + ".tmp"
         with open(tmp_path, "w", encoding="utf-8") as f:
@@ -904,7 +900,6 @@ def save_data_to_disk(force: bool = False) -> bool:
         return True
     except Exception:
         return False
-
 def load_data_from_disk():
     if not os.path.exists(DATA_PATH):
         return False
@@ -1005,9 +1000,15 @@ if not st.session_state.get("field_ok"):
         _mtime = os.path.getmtime(DATA_PATH) if os.path.exists(DATA_PATH) else None
         if _mtime and st.session_state.get("_data_mtime") != _mtime:
             load_data_from_disk()
+
             st.session_state._data_mtime = _mtime
     except Exception:
         pass
+
+# --- Performance: run counter to avoid multiple disk writes in the same rerun ---
+st.session_state['_run_counter'] = st.session_state.get('_run_counter', 0) + 1
+st.session_state['_saved_this_run'] = False
+
 
 # =========================
 # AUTO BASE URL (opzionale: streamlit-js-eval)

@@ -1686,6 +1686,24 @@ if badge_ruolo == "MODULO CAPOSQUADRA":
 
     share_gps = st.checkbox("📍 Includi posizione GPS (Privacy)", value=True)
 
+    # Helper: posizione da inviare (GPS se disponibile, altrimenti manuale)
+    def get_field_pos_to_send(_share: bool):
+        if not _share:
+            return None
+        p = st.session_state.get("field_gps")
+        if isinstance(p, list) and len(p) == 2:
+            return p
+        mp = st.session_state.get("field_manual_pos")
+        if (
+            isinstance(mp, list)
+            and len(mp) == 2
+            and mp[0] is not None
+            and mp[1] is not None
+        ):
+            return mp
+        return None
+
+
 
     # GPS dal telefono (richiede permesso posizione nel browser)
     if "field_gps" not in st.session_state:
@@ -1708,11 +1726,33 @@ if badge_ruolo == "MODULO CAPOSQUADRA":
             st.caption("GPS disattivato (Privacy).")
 
 
+
+    # Fallback manuale (se il GPS non viene letto dal browser)
+    if "field_manual_pos" not in st.session_state:
+        st.session_state.field_manual_pos = [None, None]
+
+    if share_gps:
+        _p = st.session_state.get("field_gps")
+        if not (isinstance(_p, list) and len(_p) == 2):
+            st.caption("✍️ Se il GPS non viene letto, inserisci manualmente le coordinate (da Google Maps).")
+            mc1, mc2 = st.columns(2)
+            # default: centro mappa corrente (solo come comodità)
+            try:
+                _dlat = float(st.session_state.pos_mappa[0])
+                _dlon = float(st.session_state.pos_mappa[1])
+            except Exception:
+                _dlat, _dlon = 45.0, 11.0
+            lat_man = mc1.number_input("LAT (manuale)", value=_dlat, format="%.6f", key="field_lat_manual")
+            lon_man = mc2.number_input("LON (manuale)", value=_dlon, format="%.6f", key="field_lon_manual")
+            st.session_state.field_manual_pos = [float(lat_man), float(lon_man)]
+    else:
+        st.session_state.field_manual_pos = [None, None]
+
     st.subheader("📍 Invio rapido")
     msg_rapido = st.text_input("Nota breve:", placeholder="In movimento, arrivati...")
 
     if st.button("🚀 INVIA RAPIDO", use_container_width=True):
-        pos_da_inviare = st.session_state.get('field_gps') if share_gps else None
+        pos_da_inviare = get_field_pos_to_send(share_gps)
         st.session_state.inbox.append(
             {"id": uuid.uuid4().hex, "ora": datetime.now().strftime("%H:%M"), "sq": sq_c, "msg": msg_rapido or "Aggiornamento posizione", "foto": None, "pos": pos_da_inviare}
         )
@@ -1725,7 +1765,7 @@ if badge_ruolo == "MODULO CAPOSQUADRA":
         msg_c = st.text_area("DESCRIZIONE:")
         foto = st.file_uploader("FOTO:", type=["jpg", "jpeg", "png"])
         if st.form_submit_button("🚀 INVIA RAPPORTO COMPLETO", type="primary", use_container_width=True):
-            pos_da_inviare = st.session_state.get('field_gps') if share_gps else None
+            pos_da_inviare = get_field_pos_to_send(share_gps)
             st.session_state.inbox.append(
                 {"id": uuid.uuid4().hex, "ora": datetime.now().strftime("%H:%M"), "sq": sq_c, "msg": msg_c, "foto": foto.read() if foto else None, "pos": pos_da_inviare}
             )

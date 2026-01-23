@@ -764,6 +764,7 @@ def default_state_payload():
         "ev_nome": "",
         "ev_desc": "",
         "BASE_URL": "",
+        "cnt_conclusi": 0,
     }
 
 def save_data_to_disk():
@@ -778,6 +779,7 @@ def save_data_to_disk():
         "ev_nome": st.session_state.ev_nome,
         "ev_desc": st.session_state.ev_desc,
         "BASE_URL": st.session_state.get("BASE_URL", ""),
+        "cnt_conclusi": st.session_state.get("cnt_conclusi", 0),
     }
     with open(DATA_PATH, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
@@ -801,6 +803,7 @@ def load_data_from_disk():
     st.session_state.ev_nome = payload.get("ev_nome", "")
     st.session_state.ev_desc = payload.get("ev_desc", "")
     st.session_state.BASE_URL = payload.get("BASE_URL", "") or ""
+    st.session_state.cnt_conclusi = int(payload.get("cnt_conclusi", 0) or 0)
     return True
 
 def load_data_from_uploaded_json(file_bytes: bytes):
@@ -815,6 +818,7 @@ def load_data_from_uploaded_json(file_bytes: bytes):
     st.session_state.ev_nome = payload.get("ev_nome", "")
     st.session_state.ev_desc = payload.get("ev_desc", "")
     st.session_state.BASE_URL = payload.get("BASE_URL", "") or ""
+    st.session_state.cnt_conclusi = int(payload.get("cnt_conclusi", 0) or 0)
     save_data_to_disk()
 
 # =========================
@@ -827,6 +831,9 @@ if "initialized" not in st.session_state:
     st.session_state.team_qr_open = None
 
     ok = load_data_from_disk()
+    # inizializza contatore conclusi se mancante (deriva dal brogliaccio)
+    if "cnt_conclusi" not in st.session_state or st.session_state.cnt_conclusi is None:
+        st.session_state.cnt_conclusi = sum(1 for r in st.session_state.get("brogliaccio", []) if r.get("st") == "Intervento concluso")
     if not ok:
         d = default_state_payload()
         st.session_state.brogliaccio = d["brogliaccio"]
@@ -838,6 +845,7 @@ if "initialized" not in st.session_state:
         st.session_state.ev_tipo = d["ev_tipo"]
         st.session_state.ev_nome = d["ev_nome"]
         st.session_state.ev_desc = d["ev_desc"]
+        st.session_state.cnt_conclusi = 0
         st.session_state.BASE_URL = d["BASE_URL"]
         save_data_to_disk()
 
@@ -1398,6 +1406,7 @@ with st.sidebar:
         "ev_nome": st.session_state.ev_nome,
         "ev_desc": st.session_state.ev_desc,
         "BASE_URL": st.session_state.get("BASE_URL", ""),
+        "cnt_conclusi": st.session_state.get("cnt_conclusi", 0),
     }
 
     # 📦⬇️ Scarica
@@ -1410,9 +1419,10 @@ with st.sidebar:
         use_container_width=True,
     )
 
-    # 📦⬆️ Ripristina (funziona appena carichi il file — nessun bottone extra)
+    # 📦⬆️ Ripristina (carica JSON: ripristino automatico)
+    st.markdown("**📦⬆️ Carica backup**")
     up = st.file_uploader(
-        "📦⬆️",
+        "" ,
         type=["json"],
         key="restore_backup_json",
         label_visibility="collapsed",
@@ -1514,9 +1524,17 @@ def metric_box(col, icon, label, value):
 
 c1.markdown(metric_box(COLORI_STATI["In uscita dal COC"]["hex"], "🚪", "Uscita", st_lista.count("In uscita dal COC")), unsafe_allow_html=True)
 c2.markdown(metric_box(COLORI_STATI["Intervento in corso"]["hex"], "🔥", "In corso", st_lista.count("Intervento in corso")), unsafe_allow_html=True)
-c3.markdown(metric_box(COLORI_STATI["Intervento concluso"]["hex"], "✅", "Conclusi", st_lista.count("Intervento concluso")), unsafe_allow_html=True)
+c3.markdown(metric_box(COLORI_STATI["Intervento concluso"]["hex"], "✅", "Conclusi", st.session_state.get("cnt_conclusi", 0)), unsafe_allow_html=True)
 c4.markdown(metric_box(COLORI_STATI["Rientrata al Coc"]["hex"], "↩️", "Rientro", st_lista.count("Rientrata al Coc")), unsafe_allow_html=True)
 c5.markdown(metric_box(COLORI_STATI["In attesa al COC"]["hex"], "🏠", "Al COC", st_lista.count("In attesa al COC")), unsafe_allow_html=True)
+
+# reset contatori (solo conclusi cumulativi)
+cr1, cr2 = st.columns([6, 1])
+with cr2:
+    if st.button("↺ Reset", help="Reset contatore interventi conclusi", key="reset_cnt_conclusi"):
+        st.session_state.cnt_conclusi = 0
+        save_data_to_disk()
+        st.rerun()
 
 # =========================
 # INBOX APPROVAZIONE
@@ -1550,7 +1568,10 @@ if st.session_state.inbox:
                      "mit": f"{pref} {data['msg']}", "ris": "VALIDATO", "op": st.session_state.op_name,
                      "pos": data["pos"], "foto": data["foto"]}
                 )
+                prev_st = st.session_state.squadre.get(sq_in, {}).get("stato")
                 st.session_state.squadre[sq_in]["stato"] = st_v
+                if st_v == "Intervento concluso" and prev_st != "Intervento concluso":
+                    st.session_state.cnt_conclusi = int(st.session_state.get("cnt_conclusi", 0) or 0) + 1
                 st.session_state.inbox.pop(i)
                 save_data_to_disk()
                 st.rerun()
@@ -1612,7 +1633,10 @@ with t_rad:
                     {"ora": datetime.now().strftime("%H:%M"), "chi": chi, "sq": sq, "st": st_s,
                      "mit": mit, "ris": ris, "op": st.session_state.op_name, "pos": [lat, lon], "foto": None}
                 )
+                prev_st = st.session_state.squadre.get(sq, {}).get("stato")
                 st.session_state.squadre[sq]["stato"] = st_s
+                if st_s == "Intervento concluso" and prev_st != "Intervento concluso":
+                    st.session_state.cnt_conclusi = int(st.session_state.get("cnt_conclusi", 0) or 0) + 1
                 st.session_state.pos_mappa = [lat, lon]
                 save_data_to_disk()
                 st.rerun()

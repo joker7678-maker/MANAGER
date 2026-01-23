@@ -1708,47 +1708,27 @@ with st.sidebar:
                     st.divider()
                     st.markdown("### 📱 QR accesso caposquadra")
 
-                    share_url = (st.session_state.get("SHARE_URL") or "").strip().rstrip("/")
+                    base_url = (st.session_state.get("BASE_URL") or "").strip().rstrip("/")
                     token = st.session_state.squadre[team].get("token", "")
 
-                    if not share_url.startswith("http"):
-                        detected = (st.session_state.get("BASE_URL") or "").strip()
-                        st.warning("⚠️ Per evitare l'area protetta, qui serve l'**URL pubblico** (quello che funziona col QR).")
-                        if detected:
-                            st.caption(f"URL rilevato (spesso protetto): {detected}")
-                        st.info("Vai in sidebar → **URL pubblico per condivisione (WhatsApp/QR)** e incolla l'URL pubblico diretto dell'app (es. https://…streamlit.app).")
+                    if not base_url.startswith("http"):
+                        st.warning("⚠️ Imposta in sidebar il **Base URL Streamlit Cloud** (es. https://nome-app.streamlit.app) per generare il QR.")
                     else:
-                        link = f"{share_url}/?mode=campo&team={team}&token={token}"
-
-                        # Link condivisibile (con pulsante copia integrato)
-                        st.text_input(
-                            "Link da copiare / inoltrare",
-                            value=link,
-                            key=f"sharelink_{team}",
-                        )
-
-                        cTA, cTB = st.columns(2)
-                        with cTA:
-                            st.link_button("🔗 Test apri link", link, use_container_width=True)
-                        with cTB:
-                            st.caption("Se qui si apre 'Accesso protetto', allora l'URL pubblico in sidebar non è quello giusto.")
-
-                        # Link rapido WhatsApp                        )
-
-                        # Link rapido WhatsApp (utile da PC o da telefono)
-                        wa_text = urllib.parse.quote(f"Link modulo caposquadra ({team}): {link}")
-                        st.markdown(
-                            f"<a href='https://api.whatsapp.com/send?text={wa_text}' target='_blank' "
-                            f"style='text-decoration:none;'>"
-                            f"<span style='display:inline-block;padding:.45rem .7rem;border-radius:10px;"
-                            f"border:1px solid #90caf9;background:#e3f2fd;color:#0d47a1;font-weight:600;'>"
-                            f"📲 Invia su WhatsApp</span></a>",
-                            unsafe_allow_html=True,
-                        )
+                        link = f"{base_url}/?mode=campo&team={team}&token={token}"
 
                         # QR
                         png = qr_png_bytes(link)
                         st.image(png, width=230)
+
+                        # Link del QR da copiare
+                        st.caption("🔗 Link del QR (copia e incolla):")
+                        st.text_input(
+                            "Link QR",
+                            value=link,
+                            key=f"qr_link_{team}",
+                            label_visibility="collapsed",
+                        )
+
                         st.download_button(
                             "⬇️📱",
                             data=png,
@@ -1756,10 +1736,7 @@ with st.sidebar:
                             mime="image/png",
                             key=f"dlqr_{team}",
                         )
-
-                # --- Conferma eliminazione (solo se armata) ---
-                if st.session_state.get("_del_arm") == team:
-                    st.divider()
+st.divider()
                     st.warning("Conferma eliminazione: questa azione è irreversibile.")
                     conf = st.checkbox("Confermo eliminazione squadra", key=f"confdel_{team}")
                     cD, cE = st.columns(2)
@@ -1816,13 +1793,6 @@ with st.sidebar:
             value=(st.session_state.get("BASE_URL") or ""),
             placeholder="https://nome-app.streamlit.app",
             help="URL della tua app pubblicata (serve per generare i QR)."
-        ).strip()
-
-    st.session_state.SHARE_URL = st.text_input(
-            "URL pubblico per condivisione (WhatsApp/QR)",
-            value=(st.session_state.get("SHARE_URL") or ""),
-            placeholder="(opzionale) https://nome-app.streamlit.app",
-            help="Se l'URL rilevato porta ad una pagina 'Accesso protetto' o ad un portale, inserisci qui l'URL pubblico diretto dell'app. Verrà usato per WhatsApp e QR."
         ).strip()
 
     # BACKUP in fondo

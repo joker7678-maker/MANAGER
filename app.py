@@ -1,9 +1,11 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import folium
+from branca.element import Template, MacroElement
 from streamlit_folium import st_folium
 import os
+import socket
 import base64
 import json
 import uuid
@@ -12,13 +14,264 @@ import qrcode
 from io import BytesIO
 from typing import Optional, Tuple, Dict, Any, List
 import hashlib
+import io
+
+
+# =========================
+# REPORT CACHE (GLOBAL, SAFE)
+# =========================
+# =========================
+# SQUADRE: COLORI E ICONE
+# =========================
+SQUAD_STYLE = [
+    {"icon": "🔵", "color": "#1e88e5"},
+    {"icon": "🟢", "color": "#43a047"},
+    {"icon": "🟡", "color": "#fdd835"},
+    {"icon": "🟠", "color": "#fb8c00"},
+    {"icon": "🔴", "color": "#e53935"},
+    {"icon": "🟣", "color": "#8e24aa"},
+]
+
+def squad_badge(idx: int, name: str) -> str:
+    style = SQUAD_STYLE[idx % len(SQUAD_STYLE)]
+    return f"<span style='color:{style['color']};font-weight:700'>{style['icon']} {name}</span>"
+@st.cache_data(show_spinner=False)
+def _cached_report_bytes(payload_json: str, meta_json: str) -> bytes:
+    """Cache del report HTML. Usa JSON compatti per hashing veloce.
+    Deve essere definita PRIMA di ogni utilizzo.
+    """
+    payload = json.loads(payload_json) if payload_json else {}
+    meta = json.loads(meta_json) if meta_json else {}
+    return make_html_report_bytes(
+        squads=payload.get("squadre", {}),
+        brogliaccio=payload.get("brogliaccio", []),
+        center=payload.get("center", []),
+        meta=meta,
+    )
+
+
+def team_style(team: str) -> dict:
+    """Ritorna icona+colore stabile per squadra (in base all'ordine alfabetico)."""
+    try:
+        keys = sorted(list((st.session_state.get("squadre") or {}).keys()))
+        idx = keys.index(team) if team in keys else 0
+    except Exception:
+        idx = 0
+    return SQUAD_STYLE[idx % len(SQUAD_STYLE)]
+
+def team_icon(team: str) -> str:
+    return team_style(team).get("icon", "🔵")
+
+def team_hex(team: str) -> str:
+    """Colore squadra (override: mantiene compatibilità con vecchia funzione se già esiste)."""
+    return team_style(team).get("color", "#1e88e5")
+
+def _merge_template_text(user_text: str) -> str:
+    tpl = st.session_state.get("field_last_template") or st.session_state.get("campo_template_text", "")
+    if tpl and tpl not in (user_text or ""):
+        if user_text:
+            return f"{tpl}\n\n{user_text}"
+        return tpl
+    return user_text
+
+
+
+def _b64_encode_bytes(b: bytes) -> str:
+    return base64.b64encode(b).decode("ascii")
+
+def _b64_decode_bytes(s: str) -> bytes:
+    return base64.b64decode(s.encode("ascii"))
+
+
+
+def _normalize_photo_obj(photo):
+    """Ensure JSON-serializable photo object. Accepts None/bytes/dict."""
+    if not photo:
+        return None
+    if isinstance(photo, (bytes, bytearray)):
+        return {"name": "foto", "type": "image/jpeg", "b64": _b64_encode_bytes(bytes(photo))}
+    if isinstance(photo, dict) and photo.get("b64"):
+        return {"name": photo.get("name") or "foto", "type": photo.get("type") or "image/jpeg", "b64": str(photo.get("b64"))}
+    return None
+
+def _photo_to_bytes(photo) -> Optional[bytes]:
+    """Accepts None, raw bytes, or dict {'b64':..., ...}. Returns bytes or None."""
+    if not photo:
+        return None
+    if isinstance(photo, (bytes, bytearray)):
+        return bytes(photo)
+    if isinstance(photo, dict) and photo.get("b64"):
+        try:
+            return _b64_decode_bytes(photo["b64"])
+        except Exception:
+            return None
+    return None
+
 
 # =========================
 # CONFIG
 # =========================
 st.set_page_config(page_title="RADIO MANAGER - PROTEZIONE CIVILE THIENE", layout="wide")
 
+
+
+st.markdown("""
+<style>
+/* --- ANTI SCROLL ORIZZONTALE (mobile) --- */
+html, body { overflow-x: hidden !important; }
+[data-testid="stAppViewContainer"], [data-testid="stMain"], [data-testid="stHeader"], [data-testid="stSidebar"], .stApp {
+  overflow-x: hidden !important;
+}
+div[data-testid="stHorizontalBlock"] { flex-wrap: wrap !important; }
+div[data-testid="column"] { min-width: 0 !important; }
+.stRadio [role="radiogroup"] { flex-wrap: wrap !important; }
+
+<style>
+/* ==== Stato Connessione: bottoni SOLO ICONE ==== */
+.conn-card div[data-testid="stButton"] > button {
+  font-size: 0 !important;            /* nasconde il testo */
+  padding: 0.55rem 0.7rem !important;
+}
+.conn-card div[data-testid="stButton"] > button::before {
+  font-size: 1.1rem !important;       /* dimensione icona */
+}
+
+<style>
+/* Squad cards highlight */
+.squad-card {
+  border-left: 5px solid var(--squad-color, #1e88e5);
+  padding-left: .5rem;
+}
+</style>
+
+</style>
+
+</style>
+""", unsafe_allow_html=True)
+
+TOKEN_TTL_HOURS = 12  # durata token caposquadra
+
+
+
+
+# =========================
+# GLOBAL CSS (readability fixes)
+# =========================
+st.markdown(
+    """
+<style>
+/* QR link box inside Streamlit app */
+.qr-linkbox{
+  background:#0b1220 !important;
+  border:1px solid rgba(255,255,255,.14) !important;
+  padding:.55rem .65rem !important;
+  border-radius:.75rem !important;
+  color:#ffffff !important;
+  word-break: break-all !important;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
+  font-size:.9rem !important;
+  margin-top:.35rem !important;
+}
+.qr-linkbox .qr-linklabel{
+  display:block !important;
+  margin-bottom:.25rem !important;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif !important;
+  font-size:.8rem !important;
+  opacity:.9 !important;
+}
+
+/* Fix: sidebar text input readable even if bg becomes white */
+[data-testid="stSidebar"] .stTextInput input{
+  color:#111 !important;
+}
+[data-testid="stSidebar"] .stTextInput input::placeholder{
+  color:#666 !important;
+}
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
+# =========================
+# NETWORK (OFFLINE / LAN / ONLINE)
+# =========================
+def _has_internet(timeout: float = 1.5) -> bool:
+    try:
+        socket.create_connection(("1.1.1.1", 53), timeout=timeout).close()
+        return True
+    except OSError:
+        return False
+
+def _local_ip() -> str:
+    # Best-effort local LAN IP (works even without Internet if LAN exists)
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
+
+
+def _guess_public_url() -> str:
+    """
+    Best-effort: ricava l'URL pubblico dall'host della richiesta (Streamlit Cloud / reverse proxy).
+    Se non determinabile, ritorna stringa vuota.
+    """
+    # 1) variabile ambiente (se vuoi forzare)
+    env = (os.getenv("PUBLIC_URL") or os.getenv("BASE_URL") or "").strip().rstrip("/")
+    if env:
+        return env
+
+    # 2) headers della request (quando disponibili)
+    try:
+        from streamlit.runtime.scriptrunner import get_script_run_ctx  # type: ignore
+        ctx = get_script_run_ctx()
+        req = getattr(ctx, "request", None)
+        if req is not None:
+            headers = getattr(req, "headers", {}) or {}
+            host = headers.get("Host") or headers.get("host") or ""
+            if host:
+                proto = headers.get("X-Forwarded-Proto") or headers.get("x-forwarded-proto") or "https"
+                # se è locale, usa IP del PC invece di localhost
+                if "localhost" in host or host.startswith("127.0.0.1"):
+                    port = int(st.session_state.get("NET_PORT") or 8501)
+                    ip = _local_ip()
+                    return f"http://{ip}:{port}".rstrip("/")
+                return f"{proto}://{host}".rstrip("/")
+    except Exception:
+        pass
+
+    return ""
+def compute_net_state(force_offline: bool, port: int) -> dict:
+    ip = _local_ip()
+    internet = _has_internet()
+    lan = ip not in ("127.0.0.1", "0.0.0.0", "", None)
+
+    offline = bool(force_offline) or (not internet and not lan)
+    online = (not offline) and internet
+    lan_only = (not offline) and (not internet) and lan
+
+    effective_url = ""
+    if lan_only:
+        effective_url = f"http://{ip}:{port}"
+    elif online:
+        effective_url = (st.session_state.get("PUBLIC_URL") or "").strip()
+    return {
+        "ip": ip,
+        "port": port,
+        "internet": internet,
+        "lan": lan,
+        "offline": offline,
+        "online": online,
+        "lan_only": lan_only,
+        "effective_url": effective_url,
+    }
+
+
 DATA_PATH = "data.json"
+APP_PORT = 8501
 LOGO_PATH = "logo.png"
 
 # ⚠️ Per avere MAPPA CHE STAMPA SICURO nell'HTML:
@@ -102,6 +355,10 @@ try:
 except Exception:
     qp_mode, qp_team, qp_token = "", "", ""
 
+# Auto-refresh della pagina (solo Sala Operativa, non lato campo)
+
+
+
 # =========================
 # UTILS
 # =========================
@@ -145,6 +402,9 @@ def get_squadra_info(nome_sq: str) -> Dict[str, Any]:
         "tel": (info.get("tel") or "").strip(),
         "stato": info.get("stato", "In attesa al COC"),
         "token": (info.get("token") or "").strip(),
+        "token_created_at": (info.get("token_created_at") or "").strip(),
+        "token_expires_at": (info.get("token_expires_at") or "").strip(),
+        "token_last_access": (info.get("token_last_access") or "").strip(),
     }
 
 def call_flow_from_row(row: dict) -> Tuple[str, str]:
@@ -158,17 +418,65 @@ def chip_call_flow(row: dict) -> str:
     a, b = call_flow_from_row(row)
     return f"<div class='pc-flow'>📞 <b>{a}</b> <span class='pc-arrow'>➜</span> 🎧 <b>{b}</b></div>"
 
-def _folium_tiles_name() -> str:
-    """Tile provider più veloce del default OSM in molte reti.
 
-    - "CartoDB positron" è spesso più rapido e leggero.
-    - Se preferisci il classico, cambia in "OpenStreetMap".
+def _folium_tiles_spec(choice: str | None = None) -> dict:
+    """Restituisce specifiche tiles per Folium.
+
+    choice:
+      - "Topografica" (OpenTopoMap)
+      - "Stradale" (OpenStreetMap)
+      - "Satellite" (Esri World Imagery)
+      - "Leggera" (CartoDB Positron)
     """
-    return "CartoDB positron"
+    c = (choice or "").strip().lower()
+
+    if c in ("topografica", "topo", "opentopomap"):
+        return {
+            "name": "Topografica",
+            "tiles": "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
+            "attr": "OpenTopoMap (CC-BY-SA)",
+        }
+    if c in ("satellite", "esri", "imagery"):
+        return {
+            "name": "Satellite",
+            "tiles": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+            "attr": "Tiles © Esri",
+        }
+    if c in ("leggera", "light", "positron", "cartodb"):
+        # provider integrato Folium
+        return {
+            "name": "Leggera",
+            "tiles": "CartoDB positron",
+            "attr": "",
+        }
+    # default: stradale
+    return {
+        "name": "Stradale",
+        "tiles": "OpenStreetMap",
+        "attr": "",
+    }
+
+
+def _folium_base_choice() -> str:
+    """Scelta base map per la mappa principale (app)."""
+    return st.session_state.get("map_base_main", "Topografica")
+
+
+def _folium_apply_base_layer(m: folium.Map, choice: str | None = None) -> folium.Map:
+    """Applica il layer base selezionato alla mappa Folium (tiles + attr)."""
+    spec = _folium_tiles_spec(choice or _folium_base_choice())
+    tiles = spec["tiles"]
+    attr = spec.get("attr", "")
+    name = spec.get("name", "Base")
+
+    # Usiamo tiles=None e aggiungiamo TileLayer per gestire sia provider "name" che URL custom.
+    folium.TileLayer(tiles=tiles, attr=attr, name=name, control=False).add_to(m)
+    return m
 
 
 def build_folium_map_from_df(df: pd.DataFrame, center: list, zoom: int = 13, inbox: Optional[List[dict]] = None) -> folium.Map:
-    m = folium.Map(location=center, zoom_start=zoom, tiles=_folium_tiles_name(), prefer_canvas=True)
+    m = folium.Map(location=center, zoom_start=zoom, tiles=None, prefer_canvas=True)
+    _folium_apply_base_layer(m)
     ultime_pos = {}
     if not df.empty:
         for _, row in df.iterrows():
@@ -213,7 +521,8 @@ def build_folium_map_from_events(events: List[dict], center: list, zoom: int = 1
     - prende l'ULTIMO punto per squadra (events è newest->oldest, quindi basta il primo punto visto per squadra)
     - aggiunge anche posizioni 'pending' (inbox) senza sovrascrivere quelle già valide
     """
-    m = folium.Map(location=center, zoom_start=zoom, tiles=_folium_tiles_name(), prefer_canvas=True)
+    m = folium.Map(location=center, zoom_start=zoom, tiles=None, prefer_canvas=True)
+    _folium_apply_base_layer(m)
 
     ultime_pos: Dict[str, Dict[str, Any]] = {}
     seen = set()
@@ -267,7 +576,8 @@ def build_folium_map_from_latest_positions(
     zoom: int = 13,
 ) -> folium.Map:
     """Costruisce una mappa Folium partendo già da posizioni 'deduplicate'."""
-    m = folium.Map(location=center, zoom_start=zoom, tiles=_folium_tiles_name(), prefer_canvas=True)
+    m = folium.Map(location=center, zoom_start=zoom, tiles=None, prefer_canvas=True)
+    _folium_apply_base_layer(m)
     for sq, info in (ultime_pos or {}).items():
         pos = info.get("pos")
         if not (isinstance(pos, list) and len(pos) == 2):
@@ -379,7 +689,8 @@ def _build_folium_from_latest_cached(latest: Dict[str, Dict[str, Any]], center: 
     La parte lenta è spesso il download delle tiles nel browser; qui riduciamo anche
     i marker e i JS ridondanti.
     """
-    m = folium.Map(location=center, zoom_start=zoom, tiles=_folium_tiles_name(), prefer_canvas=True)
+    m = folium.Map(location=center, zoom_start=zoom, tiles=None, prefer_canvas=True)
+    _folium_apply_base_layer(m)
     for sq, info in (latest or {}).items():
         stt = (info.get("st") or "").strip()
         hx = team_hex(sq)
@@ -523,13 +834,19 @@ def make_html_report_bytes(
     meta: dict,
 ) -> bytes:
     """
-    HTML con:
-    - selettore squadra (TUTTE o singola)
-    - selettore MAPPA (Ultime posizioni / Tutti eventi / Percorso)
-    - checkbox "Stampa con mappa"
-    MAPPA in HTML è un'IMMAGINE base64 -> stampa sempre.
+    Report HTML stampabile con:
+    - Selettore squadra (TUTTE o singola)
+    - Selettore mappa (Ultime posizioni / Tutti eventi / Percorso)
+    - Mappa Folium integrata (iframe srcdoc) -> niente Pillow/staticmap.
+    - Mappa "bloccata" (niente pan/zoom) per stampa pulita.
+    - Legenda + scala.
     """
-    df_all = pd.DataFrame(brogliaccio)
+    import html as _html
+
+    df_all = pd.DataFrame(brogliaccio or [])
+
+    include_map = bool((meta or {}).get('include_map', True))
+    include_map_js = 'true' if include_map else 'false'
 
     def _safe(s: str) -> str:
         return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -539,404 +856,472 @@ def make_html_report_bytes(
             return "<div class='muted'>Nessun dato presente.</div>"
         return df_view.to_html(index=False, classes="tbl", escape=True)
 
+    # ---- meta
     ev_data = _safe(str(meta.get("ev_data", "")))
     ev_tipo = _safe(str(meta.get("ev_tipo", "")))
     ev_nome = _safe(str(meta.get("ev_nome", "")))
     ev_desc = _safe(str(meta.get("ev_desc", "")))
     op_name = _safe(str(meta.get("op_name", "")))
+    map_style = str(meta.get("map_style", "Topografica"))
 
-    options_html = ["<option value='TUTTE'>TUTTE</option>"]
-    sections_html = []
+    # ---- tiles
+    TILESETS = {
+        "Stradale": {"tiles": "OpenStreetMap", "attr": "OpenStreetMap"},
+        "Topografica": {"tiles": "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png", "attr": "OpenTopoMap"},
+        "Satellite": {"tiles": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+                      "attr": "Esri World Imagery"},
+    }
+    if map_style not in TILESETS:
+        map_style = "Topografica"
+    tile = TILESETS[map_style]
 
-    # helper: produce 3 map images for a df
+    def _legend_macro() -> MacroElement:
+        # legend inside map
+        tmpl = Template("""
+        {% macro html(this, kwargs) %}
+        <div style="
+            position: fixed;
+            bottom: 18px;
+            left: 18px;
+            z-index: 9999;
+            background: rgba(15, 23, 42, 0.85);
+            color: #ffffff;
+            padding: 10px 12px;
+            border-radius: 12px;
+            font-family: Arial, sans-serif;
+            font-size: 13px;
+            line-height: 1.25;
+            box-shadow: 0 10px 24px rgba(0,0,0,.25);
+            max-width: 260px;
+        ">
+          <div style="font-weight: 900; font-size: 12px; letter-spacing: .06em; opacity:.95; margin-bottom:6px;">
+            LEGENDA
+          </div>
+          <div style="display:flex; gap:8px; align-items:center; margin:4px 0;">
+            <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#e11d48;"></span>
+            <span>Evento / posizione</span>
+          </div>
+          <div style="display:flex; gap:8px; align-items:center; margin:4px 0;">
+            <span style="display:inline-block;width:14px;height:2px;background:#0ea5e9;"></span>
+            <span>Percorso</span>
+          </div>
+          <div style="margin-top:6px; opacity:.85;">
+            Base: {{this.map_style}}
+          </div>
+        </div>
+        {% endmacro %}
+        """)
+        macro = MacroElement()
+        macro._template = tmpl
+        macro.map_style = map_style
+        return macro
+
+    def _normalize_points(points_raw):
+        out = []
+        for p in (points_raw or []):
+            if isinstance(p, dict):
+                lat = p.get("lat"); lon = p.get("lon")
+                label = p.get("label", "")
+            else:
+                # tuple/list (lat, lon, label?)
+                lat = p[0] if len(p) > 0 else None
+                lon = p[1] if len(p) > 1 else None
+                label = p[2] if len(p) > 2 else ""
+            try:
+                out.append((float(lat), float(lon), str(label)))
+            except Exception:
+                continue
+        return out
+
+    def _normalize_line(line_raw):
+        out = []
+        for p in (line_raw or []):
+            if isinstance(p, dict):
+                lat = p.get("lat"); lon = p.get("lon")
+            else:
+                lat = p[0] if len(p) > 0 else None
+                lon = p[1] if len(p) > 1 else None
+            try:
+                out.append((float(lat), float(lon)))
+            except Exception:
+                continue
+        return out
+
+    def _folium_srcdoc(points_raw, line_raw=None, zoom=14) -> str:
+        pts = _normalize_points(points_raw)
+        line = _normalize_line(line_raw)
+
+        # center fallback
+        if pts:
+            lat0, lon0, _ = pts[0]
+        else:
+            try:
+                lat0 = float(center[0]); lon0 = float(center[1])
+            except Exception:
+                lat0, lon0 = 45.64, 11.48  # fallback Veneto
+
+        # "bloccata" per stampa pulita
+        m = folium.Map(
+            location=[lat0, lon0],
+            zoom_start=zoom,
+            tiles=tile["tiles"],
+            attr=tile["attr"],
+            control_scale=True,
+            zoom_control=False,
+            dragging=False,
+            scrollWheelZoom=False,
+            doubleClickZoom=False,
+            touchZoom=False,
+        )
+
+        # line
+        if len(line) >= 2:
+            folium.PolyLine(line, color="#0ea5e9", weight=4, opacity=0.9).add_to(m)
+
+        # markers
+        for (lat, lon, label) in pts:
+            folium.CircleMarker(
+                location=[lat, lon],
+                radius=6,
+                color="#ffffff",
+                weight=2,
+                fill=True,
+                fill_color="#e11d48",
+                fill_opacity=0.95,
+                popup=_safe(label),
+            ).add_to(m)
+
+        m.add_child(_legend_macro())
+
+        buf = io.BytesIO()
+        m.save(buf, close_file=False)
+        return buf.getvalue().decode("utf-8", errors="ignore")
+
+    # helper: produce 3 map srcdocs for a df
     def _maps_for_df(df_x: pd.DataFrame) -> Dict[str, str]:
-        """
-        returns dict: {LATEST: datauri, ALL: datauri, TRACK: datauri} or placeholders
-        """
         # LATEST
-        pts_latest = _extract_points_latest_by_team(df_x) if "sq" in df_x.columns else _extract_points_all_events(df_x)
-        # se df_x è filtrato per squadra, latest_by_team = 1 punto (ok); se totale = multi-squadre (ok)
-        png_latest = render_static_map_png(pts_latest, polyline=None, zoom=14)
+        pts_latest = _extract_points_latest_by_team(df_x) if ("sq" in df_x.columns or "squadra" in df_x.columns) else _extract_points_all_events(df_x)
+        src_latest = _folium_srcdoc(pts_latest, None, zoom=14)
 
         # ALL
         pts_all = _extract_points_all_events(df_x)
-        png_all = render_static_map_png(pts_all, polyline=None, zoom=14)
+        src_all = _folium_srcdoc(pts_all, None, zoom=14)
 
-        # TRACK (percorso)
+        # TRACK
         line = _extract_polyline_all_events(df_x)
-        # per track: punti = punti all (così si vedono anche marker)
-        png_track = render_static_map_png(pts_all, polyline=line if len(line) >= 2 else None, zoom=14)
+        src_track = _folium_srcdoc(pts_all, line if line else None, zoom=14)
 
-        def _placeholder(text: str) -> str:
-            # immagine "finta" via SVG (stampa sicuro)
-            svg = f"""
-            <svg xmlns='http://www.w3.org/2000/svg' width='1200' height='700'>
-              <rect width='100%' height='100%' fill='#f8fafc'/>
-              <rect x='20' y='20' width='1160' height='660' rx='18' fill='#ffffff' stroke='#cbd5e1' stroke-width='3'/>
-              <text x='60' y='120' font-family='Arial' font-size='44' font-weight='900' fill='#0f172a'>MAPPA NON DISPONIBILE</text>
-              <text x='60' y='200' font-family='Arial' font-size='28' font-weight='700' fill='#334155'>{_safe(text)}</text>
-              <text x='60' y='260' font-family='Arial' font-size='24' font-weight='700' fill='#64748b'>Installa staticmap in requirements.txt per mappe stampabili.</text>
-            </svg>
-            """.encode("utf-8")
-            return "data:image/svg+xml;base64," + base64.b64encode(svg).decode("utf-8")
+        return {"LATEST": src_latest, "ALL": src_all, "TRACK": src_track}
 
-        out = {}
-        out["LATEST"] = bytes_to_data_uri_png(png_latest) if png_latest else _placeholder("Modalità: ULTIME POSIZIONI")
-        out["ALL"] = bytes_to_data_uri_png(png_all) if png_all else _placeholder("Modalità: TUTTI EVENTI")
-        out["TRACK"] = bytes_to_data_uri_png(png_track) if png_track else _placeholder("Modalità: PERCORSO")
-        return out
+    # build sections per squadra
+    options_html = ["<option value='TUTTE'>TUTTE</option>"]
+    sections_html = []
 
-    # ====== SEZIONE TUTTE
-    df_view_tot = df_for_report(df_all) if not df_all.empty else pd.DataFrame()
-    tab_tot = _df_to_html_table(df_view_tot)
-    maps_tot = _maps_for_df(df_all) if not df_all.empty else {
-        "LATEST": "",
-        "ALL": "",
-        "TRACK": "",
-    }
-    sections_html.append(f"""
-      <section class="rep" id="rep_TUTTE">
-        <div class="h2">REPORT TOTALE</div>
-        <div class="meta">
-          <span><b>Data:</b> {ev_data}</span>
-          <span><b>Tipo:</b> {ev_tipo}</span>
-          <span><b>Evento:</b> {ev_nome}</span>
-          <span><b>Operatore:</b> {op_name}</span>
-        </div>
-        <div class="desc"><b>Descrizione:</b> {ev_desc}</div>
-        <hr/>
+    # compute maps for totals
+    maps_tot = _maps_for_df(df_all) if (include_map and df_all is not None and not df_all.empty) else {"LATEST": "", "ALL": "", "TRACK": ""}
 
-        <div class="mapblock">
-          <div class="h3">🗺️ MAPPA (seleziona cosa stampare)</div>
-
-          <div class="mapmode">
-            <label>Modalità mappa:</label>
-            <select class="selMap" onchange="setMapModeForSection('rep_TUTTE', this.value)">
-              <option value="LATEST">Ultime posizioni (per squadra)</option>
-              <option value="ALL">Tutti eventi (punti)</option>
-              <option value="TRACK">Percorso (linea + punti)</option>
-            </select>
-          </div>
-
-          <div class="mapwrap">
-            <img class="mapimg map-LATEST" src="{maps_tot.get('LATEST','')}" alt="mappa latest"/>
-            <img class="mapimg map-ALL" src="{maps_tot.get('ALL','')}" alt="mappa all"/>
-            <img class="mapimg map-TRACK" src="{maps_tot.get('TRACK','')}" alt="mappa track"/>
-          </div>
-        </div>
-
-        <div class="h3">📋 LOG</div>
-        {tab_tot}
-      </section>
-    """)
-
-    # ====== SEZIONI SQUADRA
-    for sq in sorted(list(squads.keys())):
-        options_html.append(f"<option value='{_safe(sq)}'>{_safe(sq)}</option>")
-
-        if df_all.empty:
+    # per squadra
+    for sq_name in sorted(list(squads.keys())):
+        options_html.append(f"<option value='{_safe(sq_name)}'>{_safe(sq_name)}</option>")
+        if df_all is None or df_all.empty:
             df_sq = pd.DataFrame()
         else:
-            df_sq = df_all[df_all.get("sq", "") == sq].copy()
+            # colonne possibili: sq / squadra
+            if "sq" in df_all.columns:
+                df_sq = df_all[df_all["sq"] == sq_name].copy()
+            elif "squadra" in df_all.columns:
+                df_sq = df_all[df_all["squadra"] == sq_name].copy()
+            else:
+                df_sq = pd.DataFrame()
 
-        df_view_sq = df_for_report(df_sq) if not df_sq.empty else pd.DataFrame()
-        tab_sq = _df_to_html_table(df_view_sq)
+        maps_sq = _maps_for_df(df_sq) if (df_sq is not None and not df_sq.empty) else {"LATEST": "", "ALL": "", "TRACK": ""}
+        tbl = _df_to_html_table(df_sq)
 
-        capo = _safe((squads.get(sq, {}) or {}).get("capo", "") or "—")
-        tel = _safe((squads.get(sq, {}) or {}).get("tel", "") or "—")
-        stato = _safe((squads.get(sq, {}) or {}).get("stato", "") or "—")
-
-        maps_sq = _maps_for_df(df_sq) if not df_sq.empty else {
-            "LATEST": "",
-            "ALL": "",
-            "TRACK": "",
-        }
+        map_html = ""
+        if include_map:
+            map_html = f"""
+          <div class=\"mapwrap\">
+            <iframe class=\"mapframe\" data-map=\"LATEST\" srcdoc=\"{_html.escape(maps_sq['LATEST'], quote=True)}\"></iframe>
+            <iframe class=\"mapframe\" data-map=\"ALL\" srcdoc=\"{_html.escape(maps_sq['ALL'], quote=True)}\" style=\"display:none\"></iframe>
+            <iframe class=\"mapframe\" data-map=\"TRACK\" srcdoc=\"{_html.escape(maps_sq['TRACK'], quote=True)}\" style=\"display:none\"></iframe>
+          </div>
+            """
 
         sections_html.append(f"""
-          <section class="rep" id="rep_{_safe(sq)}">
-            <div class="h2">REPORT SQUADRA: {_safe(sq)}</div>
-            <div class="meta">
-              <span><b>Caposquadra:</b> {capo}</span>
-              <span><b>Telefono:</b> {tel}</span>
-              <span><b>Stato:</b> {stato}</span>
-            </div>
-            <div class="meta">
-              <span><b>Data:</b> {ev_data}</span>
-              <span><b>Tipo:</b> {ev_tipo}</span>
-              <span><b>Evento:</b> {ev_nome}</span>
-              <span><b>Operatore:</b> {op_name}</span>
-            </div>
-            <div class="desc"><b>Descrizione:</b> {ev_desc}</div>
-            <hr/>
-
-            <div class="mapblock">
-              <div class="h3">🗺️ MAPPA EVENTI SQUADRA (scegli cosa stampare)</div>
-
-              <div class="mapmode">
-                <label>Modalità mappa:</label>
-                <select class="selMap" onchange="setMapModeForSection('rep_{_safe(sq)}', this.value)">
-                  <option value="LATEST">Ultimo punto squadra</option>
-                  <option value="ALL">Tutti eventi (punti)</option>
-                  <option value="TRACK">Percorso (linea + punti)</option>
-                </select>
-              </div>
-
-              <div class="mapwrap">
-                <img class="mapimg map-LATEST" src="{maps_sq.get('LATEST','')}" alt="mappa latest"/>
-                <img class="mapimg map-ALL" src="{maps_sq.get('ALL','')}" alt="mappa all"/>
-                <img class="mapimg map-TRACK" src="{maps_sq.get('TRACK','')}" alt="mappa track"/>
-              </div>
-            </div>
-
-            <div class="h3">📋 LOG</div>
-            {tab_sq}
-          </section>
+        <section class="block" data-squad="{_safe(sq_name)}">
+          <div class="block-title">Squadra: {_safe(sq_name)}</div>
+          {map_html}
+          <div class="tablewrap">{tbl}</div>
+        </section>
         """)
 
-    html = f"""<!doctype html>
+    # total section
+    tbl_tot = _df_to_html_table(df_all)
+
+    map_html_tot = ""
+    if include_map:
+        map_html_tot = f"""
+      <div class=\"mapwrap\">
+        <iframe class=\"mapframe\" data-map=\"LATEST\" srcdoc=\"{_html.escape(maps_tot['LATEST'], quote=True)}\"></iframe>
+        <iframe class=\"mapframe\" data-map=\"ALL\" srcdoc=\"{_html.escape(maps_tot['ALL'], quote=True)}\" style=\"display:none\"></iframe>
+        <iframe class=\"mapframe\" data-map=\"TRACK\" srcdoc=\"{_html.escape(maps_tot['TRACK'], quote=True)}\" style=\"display:none\"></iframe>
+      </div>
+        """
+
+    sections_html.insert(0, f"""
+    <section class="block" data-squad="TUTTE">
+      <div class="block-title">TUTTE LE SQUADRE</div>
+          {map_html_tot}
+          <div class="tablewrap">{tbl_tot}</div>
+    </section>
+    """)
+
+    # -----------------------------
+    # TEMPLATE HTML (NO f-string!)
+    # -----------------------------
+    template = """<!doctype html>
 <html lang="it">
 <head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Report Radio Manager - Protezione Civile Thiene</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Report Sala Operativa</title>
 
 <style>
-  :root {{
-    --bg: #eef3f7;
-    --card: #ffffff;
-    --ink: #0b1220;
-    --muted: #475569;
-    --pri: #0d47a1;
-    --border: rgba(15,23,42,.15);
-  }}
-  body {{
-    margin:0; font-family: Arial, Helvetica, sans-serif;
-    background: var(--bg); color: var(--ink);
-  }}
-  .wrap {{ max-width: 1200px; margin: 18px auto; padding: 0 14px; }}
-  .top {{
-    background: linear-gradient(135deg, var(--pri), #0b1f3a);
-    color: white; border-radius: 16px; padding: 16px 18px;
-    box-shadow: 0 10px 28px rgba(2,6,23,.12);
-  }}
-  .title {{ font-size: 22px; font-weight: 900; letter-spacing:.5px; text-transform: uppercase; }}
-  .sub {{ opacity:.9; margin-top:4px; font-weight: 700; }}
-  .controls {{
-    margin-top: 12px; background: rgba(255,255,255,.14);
-    border: 1px solid rgba(255,255,255,.18);
-    border-radius: 14px; padding: 12px;
-    display:flex; gap:10px; flex-wrap: wrap; align-items:center;
-  }}
-  label {{ font-weight: 900; }}
-  select {{
-    padding: 10px 12px; border-radius: 12px; border: 1px solid rgba(15,23,42,.2);
-    font-weight: 800; min-width: 240px;
-  }}
-  .btn {{
-    padding: 10px 14px; border-radius: 12px; border: 1px solid rgba(255,255,255,.22);
-    background: #111827; color: white; font-weight: 900; cursor: pointer;
-  }}
-  .btn.secondary {{ background: #334155; }}
-  .toggle {{
-    display:flex; align-items:center; gap:10px;
-    background: rgba(255,255,255,.10);
-    border: 1px solid rgba(255,255,255,.18);
-    padding: 10px 12px; border-radius: 12px;
-    font-weight: 900;
-  }}
-  .toggle input[type="checkbox"] {{
-    width: 18px; height: 18px;
-    accent-color: #fbbf24;
-  }}
+  :root{
+    --bg:#ffffff;
+    --ink:#0f172a;
+    --muted:#475569;
+    --border:#e2e8f0;
+    --accent:#0ea5e9;
+  }
+  *{ box-sizing:border-box; }
+  body{
+    margin:0;
+    padding:24px;
+    background:var(--bg);
+    color:var(--ink);
+    font-family: Arial, sans-serif;
+  }
 
-  .rep {{
-    margin-top: 14px; background: var(--card);
-    border: 1px solid var(--border); border-radius: 16px;
-    padding: 16px; box-shadow: 0 8px 22px rgba(2,6,23,.08);
-    display:none;
-  }}
-  .h2 {{ font-size: 18px; font-weight: 950; color: var(--pri); }}
-  .h3 {{ margin-top: 12px; font-size: 14px; font-weight: 950; }}
-  .meta {{
-    margin-top: 8px;
-    display:flex; gap:14px; flex-wrap: wrap;
-    color: var(--muted); font-weight: 800;
-  }}
-  .desc {{ margin-top: 8px; color: var(--ink); font-weight: 700; }}
-  hr {{ border: none; border-top: 1px solid rgba(15,23,42,.12); margin: 12px 0; }}
+  /* Header */
+  .head{
+    border:2px solid var(--border);
+    border-radius:16px;
+    padding:16px 18px;
+    margin-bottom:14px;
+  }
+  .h1{ font-weight:900; font-size:20px; margin:0 0 6px 0; }
+  .meta{ color:var(--muted); font-size:13px; line-height:1.35; }
+  .meta b{ color:var(--ink); }
 
-  .mapmode {{
-    display:flex; gap:10px; align-items:center; flex-wrap:wrap;
-    background: #f1f5f9;
-    border: 1px solid rgba(15,23,42,.10);
-    border-radius: 12px;
-    padding: 10px 12px;
-    margin-bottom: 10px;
-  }}
-  .mapwrap {{
-    border: 1px solid rgba(15,23,42,.12);
+  /* Controls */
+  .controls{
+    display:flex;
+    gap:10px;
+    flex-wrap:wrap;
+    align-items:center;
+    margin:14px 0 18px 0;
+  }
+  .controls label{ font-size:12px; color:var(--muted); font-weight:700; letter-spacing:.02em; }
+  select{
+    padding:10px 12px;
+    border:1px solid #cbd5e1;
+    border-radius:12px;
+    font-weight:800;
+    background:#fff;
+  }
+  .spacer{ flex:1 1 auto; }
+  .hint{ font-size:12px; color:var(--muted); }
+
+  button.printbtn{
+    padding:10px 14px;
+    border:1px solid var(--accent);
+    background:var(--accent);
+    color:#ffffff;
+    border-radius:12px;
+    font-weight:900;
+    cursor:pointer;
+  }
+  button.printbtn:active{ transform: translateY(1px); }
+
+  /* Blocks */
+  .block{
+    border:1px solid var(--border);
+    border-radius:18px;
+    padding:14px;
+    margin:14px 0;
+    break-inside: avoid;
+  }
+  .block-title{
+    font-weight:900;
+    margin:0 0 10px 0;
+    font-size:15px;
+  }
+
+  /* Tables */
+  .tablewrap{ overflow:auto; }
+  table.tbl{
+    width:100%;
+    border-collapse: collapse;
+    font-size:12px;
+  }
+  .tbl th, .tbl td{
+    border:1px solid var(--border);
+    padding:8px 10px;
+    vertical-align: top;
+  }
+  .tbl th{
+    background:#f8fafc;
+    font-weight:900;
+  }
+  .muted{ color:var(--muted); }
+
+  /* Map iframes */
+  .mapwrap{
+    margin: 8px 0 12px 0;
+    border: 1px solid var(--border);
     border-radius: 14px;
     overflow: hidden;
-    background: #fff;
-  }}
-  .mapimg {{
-    width: 100%;
-    height: auto;
-    display: none;
-  }}
-
-  .tbl {{
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 12px;
-  }}
-  .tbl th {{
-    background: var(--pri);
-    color: white;
-    text-align: left;
-    padding: 8px;
-    position: sticky; top: 0;
-  }}
-  .tbl td {{
-    border-top: 1px solid rgba(15,23,42,.10);
-    padding: 7px 8px;
-    vertical-align: top;
-  }}
-  .muted {{ color: var(--muted); font-weight: 800; }}
+  }
+  .mapframe{
+    width:100%;
+    height:520px;
+    border:0;
+    display:block;
+  }
 
   /* Print */
-  @media print {{
-    body {{ background: white; }}
-    .top .controls {{ display:none !important; }}
-    .wrap {{ max-width: none; margin: 0; padding: 0; }}
-    .rep {{ box-shadow: none; border: none; border-radius: 0; }}
-    .rep {{ display:none; }}
-    .rep.printme {{ display:block !important; }}
-    .tbl th {{ position: static; }}
-    .no-map .mapblock {{ display:none !important; }}
-  }}
+  @media print{
+    body{ padding: 10mm; }
+    .controls{ display:none !important; }
+    a[href]::after{ content:""; }
+    .mapframe{ height:170mm; }
+  }
 
-
+  /* QR link box: leggibile anche su sfondi chiari */
+  .qr-linkbox{
+    background:#0b1220 !important;
+    border:1px solid rgba(255,255,255,.14) !important;
+    padding:.55rem .65rem !important;
+    border-radius:.75rem !important;
+    color:#ffffff !important;
+    word-break: break-all !important;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
+    font-size:.9rem !important;
+  }
+  .qr-linkbox .qr-linklabel{
+    display:block !important;
+    margin-bottom:.25rem !important;
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif !important;
+    font-weight:700 !important;
+    color:#ffffff !important;
+  }
 </style>
 </head>
 
 <body>
-  <div class="wrap">
-    <div class="top">
-      <div class="title">Protezione Civile Thiene — Report Radio Manager</div>
-      <div class="sub">Seleziona cosa stampare. La mappa è un'immagine: in stampa esce sempre.</div>
+  <div class="head">
+    <div class="h1">Report Sala Operativa – %%EV_NOME%%</div>
+    <div class="meta">
+      <div><b>Data:</b> %%EV_DATA%% &nbsp; <b>Tipo:</b> %%EV_TIPO%%</div>
+      <div><b>Operatore:</b> %%OP_NAME%%</div>
+      <div>%%EV_DESC%%</div>
+    </div>
+  </div>
 
-      <div class="controls">
-        <label for="sel">Seleziona stampa:</label>
-        <select id="sel" onchange="showSection()">
-          {''.join(options_html)}
-        </select>
-
-        <div class="toggle">
-          <input id="chkMap" type="checkbox" checked onchange="toggleMapClass()"/>
-          <span>Stampa con mappa</span>
-        </div>
-
-        <button class="btn" onclick="doPrint()">🖨️ STAMPA</button>
-        <button class="btn secondary" onclick="showAll()">👁️ Mostra tutto</button>
-      </div>
+  <div class="controls">
+    <div>
+      <label>Squadra</label><br/>
+      <select id="selSquad">
+        %%OPTIONS%%
+      </select>
     </div>
 
-    {''.join(sections_html)}
+    <div id="mapControls">
+      <label>Mappa</label><br/>
+      <select id="selMap">
+        <option value="LATEST">Ultime posizioni</option>
+        <option value="ALL">Tutti eventi</option>
+        <option value="TRACK">Percorso</option>
+      </select>
+    </div>
+
+    <div class="spacer"></div>
+
+    <button class="printbtn" onclick="window.print()">🖨️ Stampa PDF</button>
+    <div class="hint">Suggerito: Chrome/Edge → “Salva come PDF”</div>
+  </div>
+
+  <div id="sections">
+    %%SECTIONS%%
   </div>
 
 <script>
-  function hideAllSections(){{
-    document.querySelectorAll('.rep').forEach(s => {{
-      s.classList.remove('printme');
-      s.style.display = 'none';
-    }});
-  }}
+  const includeMap = %%INCLUDE_MAP%%;
 
-  function toggleMapClass(){{
-    const withMap = document.getElementById('chkMap').checked;
-    const body = document.body;
-    if(withMap) body.classList.remove('no-map');
-    else body.classList.add('no-map');
-  }}
+  function showSection(sq){
+    document.querySelectorAll("section.block").forEach(sec=>{
+      const ok = (sec.getAttribute("data-squad") === sq);
+      sec.style.display = ok ? "block" : "none";
+    });
+  }
 
-  function setMapModeForSection(sectionId, mode){{
-    const sec = document.getElementById(sectionId);
-    if(!sec) return;
+  function switchMap(which){
+    document.querySelectorAll("section.block").forEach(sec=>{
+      sec.querySelectorAll("iframe.mapframe").forEach(fr=>{
+        const m = fr.getAttribute("data-map");
+        fr.style.display = (m === which) ? "block" : "none";
+      });
+    });
+  }
 
-    // nascondi tutte
-    sec.querySelectorAll('.mapimg').forEach(img => img.style.display = 'none');
+  function onInit(){
+    const sel = document.getElementById("selSquad");
+    const selMap = document.getElementById("selMap");
+    const mapControls = document.getElementById("mapControls");
 
-    // mostra quella scelta
-    const img = sec.querySelector('.map-' + mode);
-    if(img) img.style.display = 'block';
+    if(!includeMap){
+      if(mapControls) mapControls.style.display = "none";
+      // Nasconde eventuali mappe presenti (difensivo)
+      document.querySelectorAll("iframe.mapframe").forEach(fr=>{ fr.style.display = "none"; });
+    }
 
-    // salva su dataset per stampa coerente
-    sec.dataset.mapmode = mode;
-  }}
+    showSection(sel.value);
+    if(includeMap){ switchMap(selMap.value); }
 
-  function ensureDefaultMapVisible(sectionId){{
-    const sec = document.getElementById(sectionId);
-    if(!sec) return;
-    const current = sec.dataset.mapmode || 'LATEST';
-    setMapModeForSection(sectionId, current);
+    sel.addEventListener("change", ()=>{
+      showSection(sel.value);
+      if(includeMap){ switchMap(selMap.value); }
+    });
 
-    // allinea select
-    const sel = sec.querySelector('.selMap');
-    if(sel) sel.value = current;
-  }}
+    if(selMap){
+      selMap.addEventListener("change", ()=>{
+        if(includeMap){ switchMap(selMap.value); }
+      });
+    }
+  }
 
-  function showSection(){{
-    const v = document.getElementById('sel').value;
-    hideAllSections();
-
-    const sec = document.getElementById('rep_' + v);
-    if(sec){{
-      sec.style.display = 'block';
-      sec.classList.add('printme');
-
-      // assicura che una mappa sia visibile (se mappa attiva)
-      ensureDefaultMapVisible('rep_' + v);
-
-      window.scrollTo(0, sec.offsetTop - 10);
-    }}
-
-    toggleMapClass();
-  }}
-
-  function showAll(){{
-    document.querySelectorAll('.rep').forEach(s => {{
-      s.classList.remove('printme');
-      s.style.display = 'block';
-
-      // assicura mappa visibile per ogni sezione
-      ensureDefaultMapVisible(s.id);
-    }});
-    toggleMapClass();
-    window.scrollTo(0, 0);
-  }}
-
-  function doPrint(){{
-    showSection();
-    setTimeout(() => {{
-      window.print();
-    }}, 300);
-  }}
-
-  (function init(){{
-    // default: mostra totale
-    showSection();
-  }})();
+  document.addEventListener("DOMContentLoaded", onInit);
 </script>
 
 </body>
 </html>
 """
-    return html.encode("utf-8")
 
-# =========================
-# PERSISTENZA
-# =========================
+    html_doc = (
+        template
+        .replace("%%EV_NOME%%", ev_nome)
+        .replace("%%EV_DATA%%", ev_data)
+        .replace("%%EV_TIPO%%", ev_tipo)
+        .replace("%%EV_DESC%%", ev_desc)
+        .replace("%%OP_NAME%%", op_name)
+        .replace("%%OPTIONS%%", "".join(options_html))
+        .replace("%%SECTIONS%%", "".join(sections_html))
+        .replace("%%INCLUDE_MAP%%", include_map_js)
+    )
+
+    return html_doc.encode("utf-8")
+    return html_doc.encode("utf-8")
 def default_state_payload():
     return {
         "brogliaccio": [],
@@ -949,18 +1334,76 @@ def default_state_payload():
         "ev_nome": "",
         "ev_desc": "",
         "BASE_URL": "",
-                "SHARE_URL": "",
-"cnt_conclusi": 0,
+        "cnt_conclusi": 0,
     }
 
-def save_data_to_disk(force: bool = False) -> bool:
-    """Salva su disco solo se i dati sono cambiati (riduce blocchi con tanti interventi).
 
-    Ritorna True se ha scritto su disco, False se non era necessario.
-    """
+# =========================
+# OUTBOX (invii in attesa di salvataggio su disco)
+# =========================
+OUTBOX_PENDING_FILE = "outbox_pending.json"
+
+def _load_outbox_pending() -> list:
+    try:
+        if os.path.exists(OUTBOX_PENDING_FILE):
+            with open(OUTBOX_PENDING_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    return data
+    except Exception:
+        pass
+    return []
+
+def _save_outbox_pending(items: list) -> None:
+    try:
+        with open(OUTBOX_PENDING_FILE, "w", encoding="utf-8") as f:
+            json.dump(items, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+def _outbox_init():
+    if "outbox_pending" not in st.session_state:
+        st.session_state.outbox_pending = _load_outbox_pending()
+
+def _outbox_add(item: dict):
+    _outbox_init()
+    st.session_state.outbox_pending.append(item)
+    _save_outbox_pending(st.session_state.outbox_pending)
+
+def _outbox_clear():
+    st.session_state.outbox_pending = []
+    _save_outbox_pending([])
+
+def _outbox_retry_save() -> bool:
+    try:
+        ok = save_data_to_disk(force=True)
+        if ok:
+            _outbox_clear()
+        return bool(ok)
+    except Exception:
+        return False
+
+
+def _photo_sig(photo_obj: dict) -> dict:
+    """Firma leggera foto: evita confronto base64 completo."""
+    if not photo_obj or not isinstance(photo_obj, dict):
+        return {}
+    b64 = photo_obj.get("b64") or ""
+    return {"name": photo_obj.get("name",""), "type": photo_obj.get("type",""), "len": len(b64)}
+
+def _entry_sig(e: dict) -> dict:
+    if not isinstance(e, dict):
+        return {}
+    d = dict(e)
+    if "foto" in d:
+        d["foto"] = _photo_sig(d.get("foto"))
+    return d
+
+def save_data_to_disk(force: bool = False) -> bool:
+    """Salvataggio veloce + atomico."""
     payload = {
-        "brogliaccio": st.session_state.brogliaccio,
-        "inbox": st.session_state.inbox,
+        "brogliaccio": [dict(x, foto=_normalize_photo_obj(x.get("foto"))) for x in st.session_state.brogliaccio],
+        "inbox": [dict(x, foto=_normalize_photo_obj(x.get("foto"))) for x in st.session_state.inbox],
         "squadre": st.session_state.squadre,
         "pos_mappa": st.session_state.pos_mappa,
         "op_name": st.session_state.op_name,
@@ -969,27 +1412,38 @@ def save_data_to_disk(force: bool = False) -> bool:
         "ev_nome": st.session_state.ev_nome,
         "ev_desc": st.session_state.ev_desc,
         "BASE_URL": st.session_state.get("BASE_URL", ""),
-        "SHARE_URL": st.session_state.get("SHARE_URL", ""),
         "cnt_conclusi": st.session_state.get("cnt_conclusi", 0),
     }
 
-    # Serializzazione stabile per confronto rapido
+    sig = None
     try:
-        payload_str = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        sig_obj = {
+            "brogliaccio": [_entry_sig(x) for x in (payload.get("brogliaccio") or [])],
+            "inbox": [_entry_sig(x) for x in (payload.get("inbox") or [])],
+            "squadre": payload.get("squadre") or {},
+            "pos_mappa": payload.get("pos_mappa") or [],
+            "op_name": payload.get("op_name") or "",
+            "ev_data": payload.get("ev_data") or "",
+            "ev_tipo": payload.get("ev_tipo") or "",
+            "ev_nome": payload.get("ev_nome") or "",
+            "ev_desc": payload.get("ev_desc") or "",
+            "BASE_URL": payload.get("BASE_URL") or "",
+            "cnt_conclusi": payload.get("cnt_conclusi") or 0,
+        }
+        sig = hashlib.sha1(json.dumps(sig_obj, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
     except Exception:
-        payload_str = None
+        sig = None
 
-    if not force and payload_str is not None:
-        if st.session_state.get("_last_saved_payload") == payload_str:
-            return False
+    if not force and sig is not None and st.session_state.get("_last_saved_sig") == sig:
+        return False
 
     try:
         tmp_path = DATA_PATH + ".tmp"
         with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
+            json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
         os.replace(tmp_path, DATA_PATH)
-        if payload_str is not None:
-            st.session_state["_last_saved_payload"] = payload_str
+        if sig is not None:
+            st.session_state["_last_saved_sig"] = sig
         return True
     except Exception:
         return False
@@ -1013,7 +1467,6 @@ def load_data_from_disk():
     st.session_state.ev_nome = payload.get("ev_nome", "")
     st.session_state.ev_desc = payload.get("ev_desc", "")
     st.session_state.BASE_URL = payload.get("BASE_URL", "") or ""
-    st.session_state.SHARE_URL = payload.get("SHARE_URL", "") or ""
     st.session_state.cnt_conclusi = int(payload.get("cnt_conclusi", 0) or 0)
     ensure_inbox_ids()
     return True
@@ -1030,7 +1483,6 @@ def load_data_from_uploaded_json(file_bytes: bytes):
     st.session_state.ev_nome = payload.get("ev_nome", "")
     st.session_state.ev_desc = payload.get("ev_desc", "")
     st.session_state.BASE_URL = payload.get("BASE_URL", "") or ""
-    st.session_state.SHARE_URL = payload.get("SHARE_URL", "") or ""
     st.session_state.cnt_conclusi = int(payload.get("cnt_conclusi", 0) or 0)
     save_data_to_disk()
     ensure_inbox_ids()
@@ -1058,7 +1510,6 @@ if "initialized" not in st.session_state:
     st.session_state.open_map_event = None
     st.session_state.team_edit_open = None
     st.session_state.team_qr_open = None
-    st.session_state.edit_event_idx = None
 
     ok = load_data_from_disk()
     ensure_inbox_ids()
@@ -1079,7 +1530,6 @@ if "initialized" not in st.session_state:
         st.session_state.ev_desc = d["ev_desc"]
         st.session_state.cnt_conclusi = 0
         st.session_state.BASE_URL = d["BASE_URL"]
-        st.session_state.SHARE_URL = d.get("SHARE_URL","")
         save_data_to_disk()
 
 # assicura token a tutte le squadre
@@ -1110,16 +1560,8 @@ try:
     loc = get_page_location()
     if isinstance(loc, dict):
         origin = (loc.get("origin") or "").strip().rstrip("/")
-        # se l'app è dietro reverse proxy con baseUrlPath, includilo
-        try:
-            base_path = (st.get_option("server.baseUrlPath") or "").strip()
-        except Exception:
-            base_path = ""
-        if base_path and not base_path.startswith("/"):
-            base_path = "/" + base_path
-        effective = (origin + base_path).rstrip("/")
-        if effective and (not st.session_state.get("BASE_URL")):
-            st.session_state.BASE_URL = effective
+        if origin and (not st.session_state.get("BASE_URL")):
+            st.session_state.BASE_URL = origin
 except Exception:
     pass
 
@@ -1156,12 +1598,15 @@ def _extract_latlon(geo: Any) -> Optional[List[float]]:
     return None
 
 def get_phone_gps_once() -> Optional[List[float]]:
-    """Prova a leggere il GPS dal browser (telefono). Richiede streamlit-js-eval."""
+    """Prova a leggere il GPS dal browser (telefono).
+    Usa `streamlit-js-eval` se disponibile; altrimenti ritorna None.
+    """
     try:
         from streamlit_js_eval import get_geolocation  # type: ignore
         geo = get_geolocation()
         return _extract_latlon(geo)
     except Exception:
+        st.session_state["_gps_dep_missing"] = True
         return None
 
 # =========================
@@ -1210,6 +1655,9 @@ def regenerate_team_token(team: str) -> None:
     team = (team or "").strip().upper()
     if team in st.session_state.squadre:
         st.session_state.squadre[team]["token"] = uuid.uuid4().hex
+        st.session_state.squadre[team]["token_created_at"] = datetime.now().isoformat(timespec="seconds")
+        st.session_state.squadre[team]["token_expires_at"] = (datetime.now() + timedelta(hours=TOKEN_TTL_HOURS)).isoformat(timespec="seconds")
+        st.session_state.squadre[team]["token_last_access"] = ""
         save_data_to_disk()
 
 def delete_team(team: str) -> Tuple[bool, str]:
@@ -1230,7 +1678,14 @@ def delete_team(team: str) -> Tuple[bool, str]:
 # =========================
 # ACCESSO PROTETTO
 # =========================
+
 def require_login():
+    # Se OFFLINE totale: niente accesso caposquadra via link
+    if st.session_state.get("NET_OFFLINE"):
+        st.session_state.auth_ok = True
+        st.session_state.field_ok = False
+        return
+
     # Accesso diretto caposquadra via link QR
     if (
         qp_mode.lower() == "campo"
@@ -1238,36 +1693,95 @@ def require_login():
         and qp_token
         and qp_token == st.session_state.squadre[qp_team].get("token")
     ):
+        # Verifica scadenza token (se presente)
+        exp = (st.session_state.squadre[qp_team].get("token_expires_at") or "").strip()
+        if exp:
+            try:
+                exp_dt = datetime.fromisoformat(exp)
+                if datetime.now() > exp_dt:
+                    st.session_state.auth_ok = False
+                    st.session_state.field_ok = False
+                    st.session_state.field_team = None
+                    st.warning("Token caposquadra scaduto. Rigenera il QR dalla Sala Operativa.")
+                    return
+            except Exception:
+                pass
+
+        # Log ultimo accesso
+        st.session_state.squadre[qp_team]["token_last_access"] = datetime.now().isoformat(timespec="seconds")
+        save_data_to_disk()
+
         st.session_state.auth_ok = False
         st.session_state.field_ok = True
         st.session_state.field_team = qp_team
         return
 
-    pw = st.secrets.get("APP_PASSWORD", None)
+    # Login Sala Operativa (password opzionale)
+    pw = None
+    try:
+        pw = st.secrets.get("APP_PASSWORD", None)
+    except Exception:
+        pw = None
+
+    # Se la password non è impostata: permetti accesso locale (utile in emergenza)
     if not pw:
-        st.warning("⚠️ APP_PASSWORD non impostata in Secrets.")
-        st.stop()
-
-    if "auth_ok" not in st.session_state:
-        st.session_state.auth_ok = False
-    if "field_ok" not in st.session_state:
+        st.session_state.auth_ok = True
         st.session_state.field_ok = False
-
-    if st.session_state.auth_ok:
         return
 
-    st.markdown("### 🔐 Accesso protetto (SALA OPERATIVA)")
-    st.caption("Inserisci la password per entrare nella console.")
-    p = st.text_input("Password", type="password")
-    if st.button("Entra"):
-        if p == pw:
+    # Se già autenticato
+    if st.session_state.get("auth_ok"):
+        st.session_state.field_ok = False
+        return
+
+    st.sidebar.warning("🔐 Accesso Sala Operativa")
+    entered = st.sidebar.text_input("Password", type="password")
+    if st.sidebar.button("Accedi"):
+        if entered == pw:
             st.session_state.auth_ok = True
+            st.session_state.field_ok = False
             st.rerun()
         else:
-            st.error("Password errata.")
+            st.sidebar.error("Password errata.")
+# =========================
+# NET STATE (pre-sidebar) + LOGIN
+# =========================
+if "force_offline" not in st.session_state:
+    st.session_state.force_offline = False
+
+# Calcolo stato rete prima della sidebar (serve per decidere accesso/ruolo)
+_net = compute_net_state(bool(st.session_state.get("force_offline", False)), APP_PORT)
+st.session_state.EFFECTIVE_URL = _net.get("effective_url", "")
+st.session_state.NET_OFFLINE = bool(_net.get("offline", False))
+st.session_state.NET_LAN_ONLY = bool(_net.get("lan_only", False))
+st.session_state.NET_ONLINE = bool(_net.get("online", False))
+st.session_state.NET_IP = _net.get("ip", "")
+st.session_state.NET_PORT = int(_net.get("port", APP_PORT) or APP_PORT)
+
+# Per compatibilità: BASE_URL usato in parti vecchie
+if st.session_state.NET_ONLINE:
+    st.session_state.BASE_URL = (st.session_state.get("PUBLIC_URL") or "").strip().rstrip("/")
+
+# Login / accesso (mostra form in sidebar se serve)
+require_login()
+if (not st.session_state.get("auth_ok")) and (not st.session_state.get("field_ok")):
     st.stop()
 
-require_login()
+
+# =========================
+# AUTO-REFRESH (solo Sala Operativa DOPO login)
+# =========================
+# Auto aggiornamento (SOFT): evita reload pagina (non perde login)
+if st.session_state.get("auth_ok") and (not st.session_state.get("field_ok")) and st.session_state.get("AUTO_REFRESH", True):
+    sec = int(st.session_state.get("AUTO_REFRESH_SEC") or 3)
+    try:
+        from streamlit_autorefresh import st_autorefresh  # pip install streamlit-autorefresh (se serve)
+        st_autorefresh(interval=sec * 1000, key="sala_autorefresh")
+    except Exception:
+        # Nessun auto refresh disponibile: usa il pulsante "Aggiorna" o disattiva Auto aggiorna.
+        pass
+
+
 
 # =========================
 # CSS (UI)
@@ -1342,6 +1856,16 @@ section[data-testid="stSidebar"] textarea{
   border: 1px solid rgba(15,23,42,.22) !important;
   border-radius: 12px !important;
   font-weight: 800 !important;
+}
+
+/* Fix visibilità testo nei campi input (Streamlit BaseWeb) */
+section[data-testid="stSidebar"] div[data-baseweb="input"] input,
+section[data-testid="stSidebar"] div[data-baseweb="textarea"] textarea{
+  color: #0b1220 !important;
+  background: #ffffff !important;
+}
+section[data-testid="stSidebar"] div[data-baseweb="input"] input::placeholder{
+  color: rgba(71,85,105,.85) !important;
 }
 
 /* File uploader (sidebar): nasconde la scheda "Drag and drop..." e rende il box compatto */
@@ -1596,6 +2120,117 @@ section[data-testid="stSidebar"] div[data-testid="stExpander"] button[kind="seco
 # SIDEBAR
 # =========================
 with st.sidebar:
+
+        # --- STATO CONNESSIONE (OFFLINE / LAN / ONLINE) ---
+    st.markdown(
+        """
+        <style>
+        /* Expander as dark card + white text */
+        section[data-testid="stSidebar"] div[data-testid="stExpander"] details {
+            background: rgba(17, 24, 39, 0.92);
+            border: 1px solid rgba(148, 163, 184, 0.35);
+            border-radius: 14px;
+            padding: 6px 10px 10px 10px;
+        }
+        section[data-testid="stSidebar"] div[data-testid="stExpander"] summary {
+            color: #ffffff !important;
+            font-weight: 800;
+        }
+        section[data-testid="stSidebar"] div[data-testid="stExpander"] * {
+            color: #ffffff !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    with st.expander("🛜 STATO CONNESSIONE", expanded=False):
+        force_offline = st.toggle(
+            "Forza",
+            value=bool(st.session_state.get("force_offline", False)),
+            key="force_offline",
+        )
+
+        # Auto aggiornamento (per ricevere subito avvisi dal modulo campo)
+        if "AUTO_REFRESH" not in st.session_state:
+            st.session_state["AUTO_REFRESH"] = True
+        if "AUTO_REFRESH_SEC" not in st.session_state:
+            st.session_state["AUTO_REFRESH_SEC"] = 3
+
+        st.toggle("Auto aggiorna", key="AUTO_REFRESH")
+        st.session_state["AUTO_REFRESH_SEC"] = st.select_slider(
+            "Intervallo (s)",
+            options=[2,3,5,10,15],
+            value=int(st.session_state.get("AUTO_REFRESH_SEC") or 3),
+        )
+        if st.button("🔄", help="Aggiorna ora"):
+            st.rerun()
+
+        ip = _local_ip()
+        internet = _has_internet()
+        lan = ip not in ("127.0.0.1", "0.0.0.0", "", None)
+
+        offline = bool(force_offline) or (not internet and not lan)
+        lan_only = (not offline) and (not internet) and lan
+        online = (not offline) and internet
+
+        if offline:
+            st.markdown("🔌 **OFFLINE TOTALE**")
+            st.markdown("Solo Sala Operativa.")
+            effective_url = ""
+        elif lan_only:
+            effective_url = f"http://{ip}:{APP_PORT}"
+            st.markdown("📡 **LAN LOCALE**")
+            st.markdown("Modulo campo attivo in rete locale.")
+            st.code(effective_url)
+        else:
+            st.markdown("🌍 **ONLINE**")
+            # Auto-compila (se possibile) l'URL pubblico quando ONLINE e il campo è vuoto
+            if not (st.session_state.get("PUBLIC_URL") or "").strip():
+                _auto = _guess_public_url()
+                if _auto:
+                    st.session_state["PUBLIC_URL"] = _auto
+            # Fallback: se ancora vuoto (es. ctx.request non disponibile), usa IP locale invece di localhost
+            if not (st.session_state.get("PUBLIC_URL") or "").strip():
+                try:
+                    _ip = _local_ip()
+                    _port = int(st.session_state.get("NET_PORT") or 8501)
+                    if _ip and _ip not in ("127.0.0.1", "0.0.0.0"):
+                        st.session_state["PUBLIC_URL"] = f"http://{_ip}:{_port}"
+                except Exception:
+                    pass
+
+            public_url = (
+                st.text_input(
+                    "URL pubblico (https://…)",
+                    key="PUBLIC_URL",
+                )
+                .strip()
+                .rstrip("/")
+            )
+            st.session_state.BASE_URL = public_url  # compatibilità
+
+            if st.button('🧪 ', key='btn_net_test'):
+                ip_now = _local_ip()
+                internet_now = _has_internet()
+                st.write(f"IP: {ip_now}")
+                st.write(f"Internet: {'OK' if internet_now else 'NO'}")
+                # test tiles (1 richiesta veloce)
+                try:
+                    sample = 'https://{s}.tile.opentopomap.org/0/0/0.png'.replace('{s}','a')
+                    r = requests.get(sample, timeout=2)
+                    st.write(f"Tiles topo: {'OK' if r.status_code==200 else r.status_code}")
+                except Exception:
+                    st.write('Tiles topo: NO')
+# compatibilità con codice esistente
+            effective_url = public_url
+        st.session_state.EFFECTIVE_URL = effective_url
+        st.session_state.NET_OFFLINE = offline
+        st.session_state.NET_LAN_ONLY = lan_only
+        st.session_state.NET_ONLINE = online
+
+    st.divider()
+
     st.markdown("## 🛡️ NAVIGAZIONE")
 
     if st.session_state.get("field_ok"):
@@ -1626,12 +2261,12 @@ with st.sidebar:
             tel_txt = inf["tel"] if inf["tel"] else "—"
 
             exp_open = (st.session_state.get("team_open") == team)
-            with st.expander(f"●  {team}", expanded=exp_open):
+            with st.expander(f"{team_icon(team)}  {team}", expanded=exp_open):
                 st.markdown(
                     f"<div style='display:flex;align-items:center;gap:10px;'>"
                     f"<div class='pc-sqdot' style='background:{hx};margin-top:0;'></div>"
                     f"<div style='flex:1;'>"
-                    f"<div class='pc-sqname' style='font-size:1.02rem'>{team}</div>"
+                    f"<div class='pc-sqname' style='font-size:1.02rem'>{team_icon(team)} {team}</div>"
                     f"<div class='pc-sqsub'>👤 {capo_txt} · 📞 {tel_txt}</div>"
                     f"</div></div>",
                     unsafe_allow_html=True,
@@ -1708,52 +2343,49 @@ with st.sidebar:
                     st.divider()
                     st.markdown("### 📱 QR accesso caposquadra")
 
-                    base_url = (st.session_state.get("BASE_URL") or "").strip().rstrip("/")
-                    token = st.session_state.squadre[team].get("token", "")
-
-                    if not base_url.startswith("http"):
-                        st.warning("⚠️ Imposta in sidebar il **Base URL Streamlit Cloud** (es. https://nome-app.streamlit.app) per generare il QR.")
+                    base_url = (st.session_state.get("EFFECTIVE_URL") or "").strip().rstrip("/")
+                    if not base_url:
+                        st.info("QR disattivato: OFFLINE totale oppure (ONLINE) URL pubblico non impostato.")
                     else:
-                        link = f"{base_url}/?mode=campo&team={team}&token={token}"
-
-                        # QR
-                        png = qr_png_bytes(link)
-                        st.image(png, width=230)
-
-                        # Link del QR da copiare
-                        st.caption("🔗 Link del QR (copia e incolla):")
-                        st.text_input(
-                            "Link QR",
-                            value=link,
-                            key=f"qr_link_{team}",
-                            label_visibility="collapsed",
-                        )
-
-                        st.download_button(
-                            "⬇️📱",
-                            data=png,
-                            file_name=f"QR_{team.replace(' ', '_')}.png",
-                            mime="image/png",
-                            key=f"dlqr_{team}",
-                        )
-
-                # --- Conferma eliminazione squadra (solo se armata) ---
-                if st.session_state.get("_del_arm") == team:
-                    st.divider()
-                    st.warning("Conferma eliminazione: questa azione è irreversibile.")
-                    conf = st.checkbox("Confermo eliminazione squadra", key=f"confdel_{team}")
-                    cD, cE = st.columns(2)
-
-                    if cD.button("✅ Conferma elimina", disabled=not conf, key=f"confirm_del_{team}"):
-                        ok, msg = delete_team(team)
-                        (st.success if ok else st.warning)(msg)
-                        st.session_state["_del_arm"] = None
-                        st.session_state.team_open = None
-                        st.rerun()
-
-                    if cE.button("❌ Annulla", key=f"cancel_del_{team}"):
-                        st.session_state["_del_arm"] = None
-                        st.rerun()
+                        token = st.session_state.squadre[team].get("token", "")
+                        if not base_url.startswith("http"):
+                            st.warning("Imposta un URL pubblico valido (https://...) quando sei ONLINE.")
+                        else:
+                            team_q = urllib.parse.quote(team)
+                            link = f"{base_url}/?mode=campo&team={team_q}&token={token}"
+                            png = qr_png_bytes(link)
+                            st.image(png, width=230)
+                            st.download_button(
+                                "⬇️📱",
+                                data=png,
+                                file_name=f"QR_{team.replace(' ', '_')}.png",
+                                mime="image/png",
+                                key=f"dlqr_{team}",
+                            )
+                            st.markdown(f"<div class='qr-linkbox'><span class='qr-linklabel'>🔗 Link QR</span>{link}</div>", unsafe_allow_html=True)
+                            exp = (st.session_state.squadre.get(team, {}).get('token_expires_at') or '').strip()
+                            last = (st.session_state.squadre.get(team, {}).get('token_last_access') or '').strip()
+                            meta_bits = []
+                            if exp:
+                                meta_bits.append(f"Scade: {exp}")
+                            if last:
+                                meta_bits.append(f"Ultimo accesso: {last}")
+                            if meta_bits:
+                                st.caption(" · ".join(meta_bits))
+                    if st.session_state.get("_del_arm") == team:
+                        st.divider()
+                        st.warning("Conferma eliminazione: questa azione è irreversibile.")
+                        conf = st.checkbox("Confermo eliminazione squadra", key=f"confdel_{team}")
+                        cD, cE = st.columns(2)
+                        if cD.button("✅ Conferma elimina", disabled=not conf, key=f"confirm_del_{team}"):
+                            ok, msg = delete_team(team)
+                            (st.success if ok else st.warning)(msg)
+                            st.session_state["_del_arm"] = None
+                            st.session_state.team_open = None
+                            st.rerun()
+                        if cE.button("❌ Annulla", key=f"cancel_del_{team}"):
+                            st.session_state["_del_arm"] = None
+                            st.rerun()
 
         st.divider()
         st.markdown("## ➕ CREA SQUADRA")
@@ -1779,6 +2411,9 @@ with st.sidebar:
                     "capo": (capo or "").strip(),
                     "tel": (tel or "").strip(),
                     "token": token,
+                    "token_created_at": datetime.now().isoformat(timespec="seconds"),
+                    "token_expires_at": (datetime.now() + timedelta(hours=TOKEN_TTL_HOURS)).isoformat(timespec="seconds"),
+                    "token_last_access": "",
                     "mhex": colore,
                 }
                 save_data_to_disk()
@@ -1788,19 +2423,7 @@ with st.sidebar:
                 st.session_state.team_edit_open = None
                 st.success("✅ Squadra creata! QR visibile sotto.")
                 st.rerun()
-
-        st.divider()
-        st.markdown("## 🌐 URL APP (per QR)")
-
-        st.caption("Se hai streamlit-js-eval si compila da solo; altrimenti incolla l'URL.")
-        st.session_state.BASE_URL = st.text_input(
-            "Base URL Streamlit Cloud",
-            value=(st.session_state.get("BASE_URL") or ""),
-            placeholder="https://nome-app.streamlit.app",
-            help="URL della tua app pubblicata (serve per generare i QR)."
-        ).strip()
-
-    # BACKUP in fondo
+# BACKUP in fondo
     st.divider()
     st.markdown("## 💾 Backup / Ripristino")
 
@@ -1875,6 +2498,115 @@ st.markdown(
 if badge_ruolo == "MODULO CAPOSQUADRA":
     st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
     st.subheader("📱 Modulo da campo")
+    # FIELD_UI_V3
+    c_ui1, c_ui2 = st.columns([2, 3])
+    with c_ui1:
+        sun_mode = st.toggle("☀️ Modalità Sole", value=False, help="Contrasto alto per uso in esterno")
+    with c_ui2:
+        st.caption("Suggerimento: usa IP in LAN (http://IP:8501) per GPS più affidabile rispetto a localhost.")
+
+    _net_ok = bool(st.session_state.get("NET_ONLINE") or st.session_state.get("NET_LAN_ONLY"))
+    _net_label = "🟢 Online" if st.session_state.get("NET_ONLINE") else ("🟡 LAN" if st.session_state.get("NET_LAN_ONLY") else "🔴 Offline")
+    _gps_ok = isinstance(st.session_state.get("field_gps"), list) and len(st.session_state.get("field_gps")) == 2
+
+    st.markdown(
+        f"""
+<style>
+/* ==== MODULO CAMPO UI ==== */
+.field-hud {{
+  position: sticky; top: 0; z-index: 999;
+  padding: .6rem .75rem; margin: .25rem 0 .75rem 0;
+  border-radius: 14px;
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255,255,255,.12);
+}}
+.field-hud .row {{
+  display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; justify-content:space-between;
+}}
+.field-pill {{
+  display:inline-flex; gap:.35rem; align-items:center;
+  padding:.35rem .6rem; border-radius: 999px;
+  font-weight:700; font-size:.9rem;
+  border:1px solid rgba(255,255,255,.14);
+}}
+.field-muted {{opacity:.85; font-weight:600}}
+/* chips template */
+div[data-testid="stButton"] > button[kind="secondary"] {{
+  border-radius: 999px !important;
+  padding: .55rem .8rem !important;
+  font-weight: 700 !important;
+  border: 1px solid rgba(255,255,255,.18) !important;
+}}
+/* invio primary: più alto e leggibile */
+div[data-testid="stButton"] > button[kind="primary"] {{
+  padding: .75rem 1rem !important;
+  font-weight: 800 !important;
+  font-size: 1.05rem !important;
+  border-radius: 16px !important;
+}}
+/* inputs più compatti */
+div[data-testid="stTextInput"] input, textarea {{
+  border-radius: 14px !important;
+}}
+/* riduci spazio tra elementi */
+section.main .block-container {{padding-top: 1rem;}}
+</style>
+""",
+        unsafe_allow_html=True,
+    )
+
+    # HUD (sempre visibile in alto mentre scorri)
+    hud_bg = "rgba(245,245,255,.92)" if sun_mode else "rgba(15,15,22,.92)"
+    hud_fg = "#0b0b0f" if sun_mode else "#ffffff"
+    pill_bg = "rgba(0,0,0,.06)" if sun_mode else "rgba(255,255,255,.08)"
+
+    st.markdown(
+        f"""
+<div class="field-hud" style="background:{hud_bg}; color:{hud_fg};">
+  <div class="row">
+    <div style="display:flex; gap:.45rem; flex-wrap:wrap;">
+      <span class="field-pill" style="background:{pill_bg}; color:{hud_fg};">📡 Rete: <span class="field-muted">{_net_label}</span></span>
+      <span class="field-pill" style="background:{pill_bg}; color:{hud_fg};">📍 GPS: <span class="field-muted">{'🟢 OK' if _gps_ok else '🔴 NO'}</span></span>
+    </div>
+    <div style="display:flex; gap:.45rem; flex-wrap:wrap; align-items:center;">
+      <span class="field-pill" style="background:{pill_bg}; color:{hud_fg};">🧑‍🚒 {st.session_state.get("field_team") or "Seleziona squadra"}</span>
+      <span class="field-pill" style="background:{pill_bg}; color:{hud_fg};">🌐 {st.session_state.get("NET_IP","") or "—"}:{st.session_state.get("NET_PORT","") or ""}</span>
+    </div>
+  </div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+    # --- Stato invii (persistenza su disco) ---
+    _outbox_init()
+    if st.session_state.get("outbox_pending"):
+        st.warning(f"🛰️ Invii in attesa di salvataggio su disco: **{len(st.session_state.outbox_pending)}**")
+        c_retry, c_info = st.columns([2, 3])
+        with c_retry:
+            if st.button("🔁 Riprova salvataggio", use_container_width=True, key="outbox_retry_btn", type="primary"):
+                if _outbox_retry_save():
+                    st.success("✅ Salvato su disco.")
+                    st.rerun()
+                else:
+                    st.error("❌ Ancora non riesco a salvare su disco.")
+        with c_info:
+            st.caption("Se rete/disco sono instabili, l'app conserva gli invii e ritenta quando premi Riprova.")
+
+    # --- Ultimo invio (log rapido) ---
+    if "field_last_sent" not in st.session_state:
+        st.session_state.field_last_sent = None
+    if st.session_state.field_last_sent:
+        ls = st.session_state.field_last_sent
+        with st.expander("🧾 Ultimo invio", expanded=False):
+            st.markdown(f"**⏱️ Ora:** {ls.get('ora','—')}")
+            st.markdown(f"**🧑‍🚒 Squadra:** {ls.get('sq','—')}")
+            st.markdown(f"**✉️ Messaggio:** {ls.get('msg','')[:400]}")
+            if ls.get("pos"):
+                st.markdown(f"**📍 Posizione:** {ls.get('pos')}")
+            st.markdown(f"**💾 Stato:** {ls.get('status','—')}")
+
 
     if st.session_state.get("field_ok"):
         sq_c = st.session_state.get("field_team")
@@ -1927,6 +2659,8 @@ if badge_ruolo == "MODULO CAPOSQUADRA":
             st.caption("GPS disattivato (Privacy).")
 
 
+    if st.session_state.get("_gps_dep_missing"):
+        st.info("ℹ️ GPS automatico: installa `streamlit-js-eval` (pip install streamlit-js-eval). Su smartphone, consenti la posizione nel browser. In HTTP, alcuni browser bloccano il GPS: in LAN usa l'IP (http://IP:8501) oppure HTTPS in Cloud.")
 
     # Fallback manuale (se il GPS non viene letto dal browser)
     if "field_manual_pos" not in st.session_state:
@@ -1936,41 +2670,157 @@ if badge_ruolo == "MODULO CAPOSQUADRA":
         _p = st.session_state.get("field_gps")
         if not (isinstance(_p, list) and len(_p) == 2):
             st.caption("✍️ Se il GPS non viene letto, inserisci manualmente le coordinate (da Google Maps).")
-            mc1, mc2 = st.columns(2)
-            # default: centro mappa corrente (solo come comodità)
-            try:
-                _dlat = float(st.session_state.pos_mappa[0])
-                _dlon = float(st.session_state.pos_mappa[1])
-            except Exception:
-                _dlat, _dlon = 45.0, 11.0
-            lat_man = mc1.number_input("LAT (manuale)", value=_dlat, format="%.6f", key="field_lat_manual")
-            lon_man = mc2.number_input("LON (manuale)", value=_dlon, format="%.6f", key="field_lon_manual")
-            st.session_state.field_manual_pos = [float(lat_man), float(lon_man)]
+            with st.expander("✍️ Coordinate manuali", expanded=False):
+                mc1, mc2 = st.columns(2)
+                # default: centro mappa corrente (solo come comodità)
+                try:
+                    _dlat = float(st.session_state.pos_mappa[0])
+                    _dlon = float(st.session_state.pos_mappa[1])
+                except Exception:
+                    _dlat, _dlon = 45.0, 11.0
+                lat_man = mc1.number_input("LAT (manuale)", value=_dlat, format="%.6f", key="field_lat_manual")
+                lon_man = mc2.number_input("LON (manuale)", value=_dlon, format="%.6f", key="field_lon_manual")
+                
+                st.session_state.field_manual_pos = [float(lat_man), float(lon_man)]
     else:
         st.session_state.field_manual_pos = [None, None]
 
     st.subheader("📍 Invio rapido")
-    msg_rapido = st.text_input("Nota breve:", placeholder="In movimento, arrivati...")
 
-    if st.button("🚀 INVIA RAPIDO", use_container_width=True):
+    # --- Applica template "pending" prima di instanziare il widget (evita errori Streamlit) ---
+    if "pending_field_msg_rapido" in st.session_state:
+        st.session_state["field_msg_rapido"] = st.session_state.pop("pending_field_msg_rapido")
+
+    msg_rapido = st.text_input(
+        "Nota breve:",
+        placeholder="In movimento, arrivati...",
+        key="field_msg_rapido",
+    )
+
+    st.markdown("**⚡ Template rapidi**")
+    tpl_cols = st.columns(3)
+    tpl_defs = [
+        ("🌊 Allagamento", "🌊 Allagamento in corso. Richiesta valutazione e intervento."),
+        ("🚧 Strada bloccata", "🚧 Strada bloccata/ostruita. Necessaria gestione viabilità."),
+        ("🌳 Albero caduto", "🌳 Albero/rami caduti. Verifica e messa in sicurezza area."),
+        ("⚡ Blackout", "⚡ Interruzione elettrica. Verifica criticità e supporto alla popolazione."),
+        ("🔥 Fumo/Incendio", "🔥 Presenza di fumo/incendio. Allertare competenti e delimitare area."),
+        ("🧍 Persona in difficoltà", "🧍 Persona in difficoltà. Richiesta supporto e valutazione sanitaria."),
+    ]
+    for i, (lbl, txt) in enumerate(tpl_defs):
+        with tpl_cols[i % 3]:
+            if st.button(lbl, use_container_width=True, key=f"tpl_rap_{i}", type="secondary"):
+                st.session_state["field_last_template"] = txt
+                st.session_state["pending_field_msg_rapido"] = txt
+                st.rerun()
+
+    if st.button("🚀 INVIA RAPIDO", use_container_width=True, type="primary"):
         pos_da_inviare = get_field_pos_to_send(share_gps)
+        base = st.session_state.get("field_msg_rapido") or msg_rapido or ""
+        msg_finale = _merge_template_text(base) or "Aggiornamento posizione"
         st.session_state.inbox.append(
-            {"id": uuid.uuid4().hex, "ora": datetime.now().strftime("%H:%M"), "sq": sq_c, "msg": msg_rapido or "Aggiornamento posizione", "foto": None, "pos": pos_da_inviare}
+            {
+                "id": uuid.uuid4().hex,
+                "ora": datetime.now().strftime("%H:%M"),
+                "sq": sq_c,
+                "msg": msg_finale,
+                "foto": None,
+                "pos": pos_da_inviare,
+            }
         )
-        save_data_to_disk()
-        st.success("✅ Inviato!")
-
+        try:
+            try:
+                save_data_to_disk()
+                st.session_state.field_last_sent = {
+                    "ora": datetime.now().strftime("%H:%M"),
+                    "sq": sq_c,
+                    "msg": _merge_template_text(st.session_state.get("field_msg_completo") or ""),
+                    "pos": pos_da_inviare,
+                    "status": "✅ Salvato su disco",
+                }
+                st.toast("✅ Inviato", icon="✅")
+                st.success("✅ Inviato!")
+            except Exception as e:
+                st.error(f"Errore salvataggio: {e}")
+                st.info("Messaggio inserito in memoria, ma non salvato su disco.")
+                _outbox_add({"t": datetime.now().isoformat(timespec="seconds"), "sq": sq_c, "msg": _merge_template_text(st.session_state.get("field_msg_completo") or ""), "pos": pos_da_inviare})
+                st.session_state.field_last_sent = {
+                    "ora": datetime.now().strftime("%H:%M"),
+                    "sq": sq_c,
+                    "msg": _merge_template_text(st.session_state.get("field_msg_completo") or ""),
+                    "pos": pos_da_inviare,
+                    "status": "🛰️ In attesa di salvataggio",
+                }
+            finally:
+                st.session_state["field_last_template"] = ""
+                st.session_state["campo_template_text"] = ""
+                st.session_state["field_msg_completo"] = ""
+        except Exception as e:
+            st.error(f"Errore salvataggio: {e}")
+            st.info("Messaggio inserito in memoria, ma non salvato su disco.")
+            _outbox_add({"t": datetime.now().isoformat(timespec="seconds"), "sq": sq_c, "msg": msg_finale, "pos": pos_da_inviare})
+            st.session_state.field_last_sent = {
+                "ora": datetime.now().strftime("%H:%M"),
+                "sq": sq_c,
+                "msg": msg_finale,
+                "pos": pos_da_inviare,
+                "status": "🛰️ In attesa di salvataggio",
+            }
+        finally:
+            st.session_state["field_last_template"] = ""
+            st.session_state["campo_template_text"] = ""
+            st.session_state["pending_field_msg_rapido"] = ""  # clear input safely next rerun
     st.divider()
+    st.markdown("**⚡ Template rapidi (per rapporto completo)**")
+    tplc_cols = st.columns(3)
+    for i, (lbl, txt) in enumerate(tpl_defs):
+        with tplc_cols[i % 3]:
+            if st.button(lbl, use_container_width=True, key=f"tpl_com_{i}", type="secondary"):
+                st.session_state["field_last_template"] = txt
+                st.session_state["pending_field_msg_completo"] = txt
+                st.rerun()
+
     with st.form("form_c"):
         st.subheader("📸 Rapporto completo")
-        msg_c = st.text_area("DESCRIZIONE:")
+        # --- Applica template pending prima di instanziare la textarea ---
+        if "pending_field_msg_completo" in st.session_state:
+            st.session_state["field_msg_completo"] = st.session_state.pop("pending_field_msg_completo")
+
+        msg_c = st.text_area("DESCRIZIONE:", key="field_msg_completo")
+
+
         foto = st.file_uploader("FOTO:", type=["jpg", "jpeg", "png"])
+        if foto is not None:
+            st.image(foto, caption="Anteprima foto", use_container_width=True)
+
         if st.form_submit_button("🚀 INVIA RAPPORTO COMPLETO", type="primary", use_container_width=True):
             pos_da_inviare = get_field_pos_to_send(share_gps)
             st.session_state.inbox.append(
-                {"id": uuid.uuid4().hex, "ora": datetime.now().strftime("%H:%M"), "sq": sq_c, "msg": msg_c, "foto": foto.read() if foto else None, "pos": pos_da_inviare}
+                {
+                    "id": uuid.uuid4().hex,
+                    "ora": datetime.now().strftime("%H:%M"),
+                    "sq": sq_c,
+                    "msg": _merge_template_text(st.session_state.get("field_msg_completo") or ""),
+                    "foto": (
+                        {
+                            "name": getattr(foto, "name", "foto"),
+                            "type": getattr(foto, "type", "image/jpeg"),
+                            "b64": _b64_encode_bytes(foto.read()),
+                        }
+                        if foto
+                        else None
+                    ),
+                    "pos": pos_da_inviare,
+                }
             )
             save_data_to_disk()
+            st.session_state.field_last_sent = {
+                "ora": datetime.now().strftime("%H:%M"),
+                "sq": sq_c,
+                "msg": msg_finale,
+                "pos": pos_da_inviare,
+                "status": "✅ Salvato su disco",
+            }
             st.success("✅ Inviato!")
 
     st.markdown("</div>", unsafe_allow_html=True)
@@ -2018,7 +2868,7 @@ def render_inbox_approval():
         sq_in = data["sq"]
         inf_in = get_squadra_info(sq_in)
 
-        with st.expander(f"📥 APPROVAZIONE: {sq_in} ({data['ora']})", expanded=True):
+        with st.expander(f"📥 APPROVAZIONE: {sq_in} ({data['ora']})", expanded=False):
             st.markdown(f"<div class='pc-flow'>📞 <b>{sq_in}</b> <span class='pc-arrow'>➜</span> 🎧 <b>SALA OPERATIVA</b></div>", unsafe_allow_html=True)
             st.markdown(f"**👤 Caposquadra:** {inf_in['capo'] or '—'} &nbsp;&nbsp; | &nbsp;&nbsp; **📞 Tel:** {inf_in['tel'] or '—'}")
 
@@ -2026,7 +2876,7 @@ def render_inbox_approval():
             if data["pos"]:
                 st.info(f"📍 GPS acquisito: {data['pos']}")
             if data["foto"]:
-                st.image(data["foto"], width=220)
+                st.image(_photo_to_bytes(data["foto"]), width=220)
 
             st_v = st.selectbox("Nuovo Stato:", list(COLORI_STATI.keys()), key=f"sv_inbox_{msg_id}")
             st.markdown(chip_stato(st_v), unsafe_allow_html=True)
@@ -2163,12 +3013,18 @@ with t_rad:
                     st.info("Per la mappa rapida serve 'staticmap' in requirements.txt. In alternativa usa la mappa interattiva.")
             else:
                 # interattiva (Folium)
+                st.selectbox(
+                    "Tipo mappa",
+                    ["Topografica", "Stradale", "Satellite", "Leggera"],
+                    index=["Topografica", "Stradale", "Satellite", "Leggera"].index(st.session_state.get("map_base_main", "Topografica")),
+                    key="map_base_main",
+                )
                 m = build_folium_map_from_latest_positions(
                     ultime_pos,
                     center=st.session_state.pos_mappa,
                     zoom=14,
                 )
-                st_folium(m, width="100%", height=450, returned_objects=[])
+                st_folium(m, width=1100, height=450, returned_objects=[], key="map_main")
         else:
             st.info("Mappa nascosta (velocizza i rerun).")
         # =========================
@@ -2179,7 +3035,7 @@ with t_rad:
         mode = st.radio(
             "Modalità:",
             ["Testo → NATO", "NATO → Frase"],
-            horizontal=True,
+            horizontal=False,
             key="nato_mode",
         )
 
@@ -2329,19 +3185,65 @@ with t_rep:
     st.divider()
     st.subheader("🖨️ Report HTML (stampa con/senza mappa + selettore mappa eventi squadra)")
 
+    
+    # Tipo mappa per report (valido anche per mappa dentro HTML)
+    if "map_style" not in st.session_state:
+        st.session_state.map_style = "Topografica"
+    st.session_state.map_style = st.selectbox(
+        "🗺️ Tipo mappa (report)",
+        ["Topografica", "Stradale", "Satellite"],
+        index=["Topografica", "Stradale", "Satellite"].index(st.session_state.map_style) if st.session_state.map_style in ["Topografica","Stradale","Satellite"] else 0,
+        key="map_style_select_report",
+    )
+    rep_with_map = st.checkbox("Stampa con mappa", value=True, key="rep_with_map")
+
     meta = {
         "ev_data": str(st.session_state.ev_data),
         "ev_tipo": st.session_state.ev_tipo,
         "ev_nome": st.session_state.ev_nome,
         "ev_desc": st.session_state.ev_desc,
         "op_name": st.session_state.op_name,
+        "map_style": st.session_state.map_style,
+        "include_map": bool(rep_with_map),
     }
 
-    html_bytes = make_html_report_bytes(
-        squads=st.session_state.squadre,
-        brogliaccio=st.session_state.brogliaccio,
-        center=st.session_state.pos_mappa,
-        meta=meta,
+
+    # --- Filtro squadra (report) ---
+    _sq_opts = sorted(list((st.session_state.squadre or {}).keys()))
+    if "_rep_sq_filter" not in st.session_state:
+        st.session_state._rep_sq_filter = ["Tutte"]
+    _rep_sq = st.multiselect(
+        "🧑‍🚒 Filtro squadra (report)",
+        options=["Tutte"] + _sq_opts,
+        default=st.session_state._rep_sq_filter,
+        key="_rep_sq_filter",
+        help="Seleziona una o più squadre. 'Tutte' include ogni evento.",
+    )
+    _use_all = ("Tutte" in _rep_sq) or (len(_rep_sq) == 0)
+    _rep_sq_set = set(_sq_opts) if _use_all else set([x for x in _rep_sq if x != "Tutte"])
+
+
+    # Cache report per velocizzare (foto escluse)
+    _rep_brog = []
+    for _e in (st.session_state.brogliaccio or []):
+        # applica filtro squadra
+        if isinstance(_e, dict):
+            _sqv = _e.get('sq')
+            if _sqv and _sqv not in _rep_sq_set:
+                continue
+        else:
+            # se non è dict, non filtriamo
+            pass
+        if isinstance(_e, dict):
+            _d = dict(_e)
+            _d.pop('foto', None)
+            _rep_brog.append(_d)
+        else:
+            _rep_brog.append(_e)
+    _payload = {'squadre': st.session_state.squadre, 'brogliaccio': _rep_brog, 'center': st.session_state.pos_mappa}
+    html_bytes = _cached_report_bytes(
+        json.dumps(_payload, ensure_ascii=False, sort_keys=True, separators=(',', ':')),
+        json.dumps(meta, ensure_ascii=False, sort_keys=True, separators=(',', ':')),
     )
 
     st.download_button(
@@ -2351,22 +3253,100 @@ with t_rep:
         mime="text/html",
     )
 
+    st.divider()
+    st.markdown("#### ✏️ Modifica evento (correzione rapida)")
+    _maxi = max(len(st.session_state.brogliaccio) - 1, 0)
+    _idx_edit = st.number_input("Indice evento (#) da modificare", min_value=0, max_value=_maxi, value=0, step=1, key="rep_edit_idx")
+    if st.button("✏️ Apri modifica evento", key="rep_open_edit"):
+        st.session_state.edit_event_idx = int(_idx_edit)
+        st.rerun()
+
+
     st.caption("Apri l'HTML → scegli squadra → scegli modalità mappa (Ultime/Tutti/Percorso) → STAMPA con/senza mappa.")
     st.markdown("</div>", unsafe_allow_html=True)
 
 # =========================
 # REGISTRO EVENTI + MAPPA (FAST)
 # =========================
+# =========================
+# MODIFICA EVENTO (correzione rapida)
+# =========================
+if "edit_event_idx" not in st.session_state:
+    st.session_state.edit_event_idx = None
+
+if st.session_state.edit_event_idx is not None:
+    _i = int(st.session_state.edit_event_idx)
+    if 0 <= _i < len(st.session_state.brogliaccio):
+        _ev = st.session_state.brogliaccio[_i]
+        _STATI = globals().get("STATI_EVENTO", ["uscita", "intervento", "concluso", "info"])
+        with st.expander(f"✏️ Modifica evento #{_i}", expanded=False):
+            c1, c2, c3 = st.columns([2, 2, 2])
+            _sq = c1.selectbox("SQUADRA", options=sorted(list(st.session_state.squadre.keys())), index=(sorted(list(st.session_state.squadre.keys())).index(_ev.get("sq")) if _ev.get("sq") in st.session_state.squadre else 0), key=f"edit_sq_{_i}")
+            _st = c2.selectbox("STATO", options=_STATI, index=(_STATI.index(_ev.get("st")) if _ev.get("st") in _STATI else 0), key=f"edit_st_{_i}")
+            _ts = c3.text_input("DATA/ORA", value=str(_ev.get("ts","")), key=f"edit_ts_{_i}", help="Lascia invariato se va bene (es. 2026-01-24 13:10)")
+            _chi = st.text_input("CHIAMA", value=str(_ev.get("chi","")), key=f"edit_chi_{_i}")
+            _mit = st.text_input("MITTENTE", value=str(_ev.get("mit","")), key=f"edit_mit_{_i}")
+            _ris = st.text_input("RICEVE", value=str(_ev.get("ris","")), key=f"edit_ris_{_i}")
+            _op  = st.text_area("OPERAZIONE / NOTE", value=str(_ev.get("op","")), key=f"edit_op_{_i}", height=90)
+
+            _pos = _ev.get("pos") or {}
+            if isinstance(_pos, (list, tuple)) and len(_pos) >= 2:
+                _lat0, _lon0 = float(_pos[0]), float(_pos[1])
+            else:
+                _lat0, _lon0 = float(_pos.get("lat", 0) or 0), float(_pos.get("lon", 0) or 0)
+
+            cc1, cc2 = st.columns(2)
+            _lat = cc1.number_input("LAT", value=_lat0, format="%.6f", key=f"edit_lat_{_i}")
+            _lon = cc2.number_input("LON", value=_lon0, format="%.6f", key=f"edit_lon_{_i}")
+
+            b1, b2 = st.columns(2)
+            if b1.button("💾 Salva modifiche", use_container_width=True, key=f"edit_save_{_i}"):
+                st.session_state.brogliaccio[_i] = {
+                    "ts": _ts or datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "sq": _sq,
+                    "st": _st,
+                    "chi": _chi,
+                    "mit": _mit,
+                    "ris": _ris,
+                    "op": _op,
+                    "pos": {"lat": float(_lat), "lon": float(_lon)},
+                }
+                save_data_to_disk()
+                st.session_state.edit_event_idx = None
+                st.success("Evento aggiornato.")
+                st.rerun()
+
+            if b2.button("✖️ Annulla", use_container_width=True, key=f"edit_cancel_{_i}"):
+                st.session_state.edit_event_idx = None
+                st.rerun()
+    else:
+        st.session_state.edit_event_idx = None
+
 st.markdown("### 📋 REGISTRO EVENTI")
 
 # Registro: modalità tabella (molto più veloce) + dettaglio singolo
-mode_fast = st.toggle("⚡ Modalità veloce (tabella + dettaglio)", value=False, key="log_fast_mode")
+view_mode = st.selectbox("Vista registro:", ["Classica", "Veloce"], index=0, key="log_view_mode")
+mode_fast = (view_mode == "Veloce")
 
 # Limite eventi caricati (evita rallentamenti con migliaia di righe)
 _lim_opts = [100, 250, 500, 1000, "Tutti"]
 _lim = st.selectbox("Carica eventi:", _lim_opts, index=1, key="log_limit")
 all_events = st.session_state.brogliaccio
 events_loaded = all_events if _lim == "Tutti" else all_events[:int(_lim)]
+
+# --- Filtro squadra (registro) ---
+_sq_opts_reg = sorted(list((st.session_state.squadre or {}).keys()))
+_reg_sq = st.selectbox(
+    "🧑‍🚒 Filtro squadra (registro)",
+    options=["Tutte"] + _sq_opts_reg,
+    index=0,
+    key="log_sq_filter",
+    help="Mostra solo gli interventi della squadra selezionata oppure tutti.",
+)
+if _reg_sq != "Tutte":
+    events_loaded = [e for e in events_loaded if isinstance(e, dict) and e.get("sq") == _reg_sq]
+    st.caption(f"Filtro attivo: **{_reg_sq}** — eventi mostrati: **{len(events_loaded)}**.")
+
 
 if _lim != "Tutti" and len(all_events) > int(_lim):
     st.caption(f"Caricati i primi **{int(_lim)}** eventi su **{len(all_events)}** totali (per velocità).")
@@ -2395,13 +3375,14 @@ if st.session_state.open_map_event is not None:
                 else:
                     st.info("Per la mappa rapida serve 'staticmap' in requirements.txt. Disattiva il toggle per la mappa interattiva.")
             else:
-                m_ev = folium.Map(location=pos, zoom_start=15, tiles=_folium_tiles_name(), prefer_canvas=True)
+                m_ev = folium.Map(location=pos, zoom_start=15, tiles=None, prefer_canvas=True)
+                _folium_apply_base_layer(m_ev)
                 folium.Marker(
                     pos,
                     tooltip=f"{row.get('sq','')} · {row.get('st','')}",
                     icon=folium.Icon(color=COLORI_STATI.get(row.get('st',''), {}).get('color', 'blue')),
                 ).add_to(m_ev)
-                st_folium(m_ev, width="100%", height=420, returned_objects=[])
+                st_folium(m_ev, width="100%", height=420, returned_objects=[], key="map_event")
         else:
             st.info("Evento senza coordinate GPS (OMISSIS).")
 
@@ -2476,7 +3457,7 @@ if mode_fast:
             a, c = call_flow_from_row(b)
             titolo = f"{b.get('ora','')} | 📞 {a} ➜ 🎧 {c} | {b.get('sq','')} | {gps_t}"
 
-            with st.expander(f"🔎 Dettaglio evento  #{int(pick)}  —  {titolo}", expanded=True):
+            with st.expander(f"🔎 Dettaglio evento  #{int(pick)}  —  {titolo}", expanded=False):
                 st.markdown(chip_call_flow(b), unsafe_allow_html=True)
                 st.markdown(chip_stato(b.get("st", "")), unsafe_allow_html=True)
 
@@ -2490,63 +3471,19 @@ if mode_fast:
                     f"📩 **RIS:** {b.get('ris','')}  \n"
                     f"👤 **OP:** {b.get('op','')}"
                 )
-                # --- Correzione evento (modifica) ---
-                cE1, cE2, cE3 = st.columns([1, 1, 2])
-                if cE1.button("✏️ MODIFICA", key=f"edit_ev_btn_{int(pick)}"):
+
+                col_a, col_b, col_c = st.columns([1, 1, 2])
+                if col_a.button("✏️ MODIFICA", key=f"edit_ev_pick_{int(pick)}"):
                     st.session_state.edit_event_idx = int(pick)
                     st.rerun()
-                if st.session_state.get("edit_event_idx") == int(pick):
-                    with st.form(f"form_edit_event_{int(pick)}", clear_on_submit=False):
-                        st.markdown("**Modifica campi evento (correzione):**")
-                        new_sq = st.text_input("Squadra", value=str(b.get("sq","") or ""), key=f"edit_sq_{int(pick)}")
-                        new_st = st.text_input("Stato", value=str(b.get("st","") or ""), key=f"edit_st_{int(pick)}")
-                        new_mit = st.text_area("MSG (Mittente)", value=str(b.get("mit","") or ""), key=f"edit_mit_{int(pick)}", height=90)
-                        new_ris = st.text_area("RIS (Risposta)", value=str(b.get("ris","") or ""), key=f"edit_ris_{int(pick)}", height=90)
-                        new_op = st.text_input("Operatore", value=str(b.get("op","") or ""), key=f"edit_op_{int(pick)}")
-                        # GPS
-                        has_gps = isinstance(b.get("pos"), list) and len(b.get("pos")) == 2
-                        lat0 = float(b["pos"][0]) if has_gps else 0.0
-                        lon0 = float(b["pos"][1]) if has_gps else 0.0
-                        gcol1, gcol2, gcol3 = st.columns([1,1,2])
-                        new_lat = gcol1.number_input("Lat", value=lat0, format="%.6f", key=f"edit_lat_{int(pick)}")
-                        new_lon = gcol2.number_input("Lon", value=lon0, format="%.6f", key=f"edit_lon_{int(pick)}")
-                        set_gps = gcol3.checkbox("Salva GPS (se l'evento aveva OMISSIS, ora lo aggiunge)", value=has_gps, key=f"edit_setgps_{int(pick)}")
-
-                        s1, s2 = st.columns(2)
-                        ok_save = s1.form_submit_button("✅ SALVA MODIFICHE")
-                        cancel = s2.form_submit_button("❌ ANNULLA")
-                    if cancel:
-                        st.session_state.edit_event_idx = None
-                        st.rerun()
-                    if ok_save:
-                        b["sq"] = (new_sq or "").strip().upper()
-                        b["st"] = (new_st or "").strip()
-                        b["mit"] = (new_mit or "").strip()
-                        b["ris"] = (new_ris or "").strip()
-                        b["op"] = (new_op or "").strip()
-                        if set_gps:
-                            try:
-                                b["pos"] = [float(new_lat), float(new_lon)]
-                            except Exception:
-                                pass
-                        else:
-                            b["pos"] = None
-                        save_data_to_disk()
-                        st.success("Evento aggiornato.")
-                        st.session_state.edit_event_idx = None
-                        st.rerun()
-                else:
-                    cE2.caption("Correggi un evento se c'è un errore di compilazione.")
-
-                col_a, col_b = st.columns([1, 2])
                 if gps_ok:
-                    if col_a.button("🗺️ APRI MAPPA VISIVA", key=f"open_map_pick_{int(pick)}"):
+                    if col_b.button("🗺️ MAPPA", key=f"open_map_pick_{int(pick)}"):
                         st.session_state.open_map_event = int(pick)
                         st.rerun()
-                    col_b.caption("Apre una mappa dedicata in alto al registro (una alla volta).")
+                    col_c.caption("Apre una mappa dedicata in alto al registro (una alla volta).")
                 else:
-                    col_a.button("🗺️ MAPPA NON DISPONIBILE", key=f"no_map_pick_{int(pick)}", disabled=True)
-                    col_b.caption("Coordinate non presenti (OMISSIS).")
+                    col_b.button("🗺️ N/D", key=f"no_map_pick_{int(pick)}", disabled=True)
+                    col_c.caption("Coordinate non presenti (OMISSIS).")
 
 # -------- Modalità classica (expander per evento) --------
 else:
@@ -2571,63 +3508,19 @@ else:
                 f"📩 **RIS:** {b.get('ris','')}  \n"
                 f"👤 **OP:** {b.get('op','')}"
             )
-            # --- Correzione evento (modifica) ---
-            cE1, cE2, cE3 = st.columns([1, 1, 2])
-            if cE1.button("✏️ MODIFICA", key=f"edit_ev_btn_{i}"):
-                st.session_state.edit_event_idx = i
+
+            col_a, col_b, col_c = st.columns([1, 1, 2])
+            if col_a.button("✏️ MODIFICA", key=f"edit_ev_{i}"):
+                st.session_state.edit_event_idx = int(i)
                 st.rerun()
-            if st.session_state.get("edit_event_idx") == i:
-                with st.form(f"form_edit_event_{i}", clear_on_submit=False):
-                    st.markdown("**Modifica campi evento (correzione):**")
-                    new_sq = st.text_input("Squadra", value=str(b.get("sq","") or ""), key=f"edit_sq_{i}")
-                    new_st = st.text_input("Stato", value=str(b.get("st","") or ""), key=f"edit_st_{i}")
-                    new_mit = st.text_area("MSG (Mittente)", value=str(b.get("mit","") or ""), key=f"edit_mit_{i}", height=90)
-                    new_ris = st.text_area("RIS (Risposta)", value=str(b.get("ris","") or ""), key=f"edit_ris_{i}", height=90)
-                    new_op = st.text_input("Operatore", value=str(b.get("op","") or ""), key=f"edit_op_{i}")
-                    # GPS
-                    has_gps = isinstance(b.get("pos"), list) and len(b.get("pos")) == 2
-                    lat0 = float(b["pos"][0]) if has_gps else 0.0
-                    lon0 = float(b["pos"][1]) if has_gps else 0.0
-                    gcol1, gcol2, gcol3 = st.columns([1,1,2])
-                    new_lat = gcol1.number_input("Lat", value=lat0, format="%.6f", key=f"edit_lat_{i}")
-                    new_lon = gcol2.number_input("Lon", value=lon0, format="%.6f", key=f"edit_lon_{i}")
-                    set_gps = gcol3.checkbox("Salva GPS (se l'evento aveva OMISSIS, ora lo aggiunge)", value=has_gps, key=f"edit_setgps_{i}")
-
-                    s1, s2 = st.columns(2)
-                    ok_save = s1.form_submit_button("✅ SALVA MODIFICHE")
-                    cancel = s2.form_submit_button("❌ ANNULLA")
-                if cancel:
-                    st.session_state.edit_event_idx = None
-                    st.rerun()
-                if ok_save:
-                    b["sq"] = (new_sq or "").strip().upper()
-                    b["st"] = (new_st or "").strip()
-                    b["mit"] = (new_mit or "").strip()
-                    b["ris"] = (new_ris or "").strip()
-                    b["op"] = (new_op or "").strip()
-                    if set_gps:
-                        try:
-                            b["pos"] = [float(new_lat), float(new_lon)]
-                        except Exception:
-                            pass
-                    else:
-                        b["pos"] = None
-                    save_data_to_disk()
-                    st.success("Evento aggiornato.")
-                    st.session_state.edit_event_idx = None
-                    st.rerun()
-            else:
-                cE2.caption("Correggi un evento se c'è un errore di compilazione.")
-
-            col_a, col_b = st.columns([1, 2])
             if gps_ok:
-                if col_a.button("🗺️ APRI MAPPA VISIVA", key=f"open_map_{i}"):
+                if col_b.button("🗺️ MAPPA", key=f"open_map_{i}"):
                     st.session_state.open_map_event = i
                     st.rerun()
-                col_b.caption("Apre una mappa dedicata in alto al registro (una alla volta).")
+                col_c.caption("Apre una mappa dedicata in alto al registro (una alla volta).")
             else:
-                col_a.button("🗺️ MAPPA NON DISPONIBILE", key=f"no_map_{i}", disabled=True)
-                col_b.caption("Coordinate non presenti (OMISSIS).")
+                col_b.button("🗺️ N/D", key=f"no_map_{i}", disabled=True)
+                col_c.caption("Coordinate non presenti (OMISSIS).")
 
 
 # =========================
@@ -2650,7 +3543,6 @@ if col_m1.button("🧹 CANCELLA TUTTI I DATI"):
     st.session_state.ev_nome = d["ev_nome"]
     st.session_state.ev_desc = d["ev_desc"]
     st.session_state.BASE_URL = d["BASE_URL"]
-    st.session_state.SHARE_URL = d.get("SHARE_URL","")
     st.session_state.open_map_event = None
     st.session_state.team_edit_open = None
     st.session_state.team_qr_open = None
@@ -2661,3 +3553,78 @@ if col_m1.button("🧹 CANCELLA TUTTI I DATI"):
 if col_m2.button("💾 SALVA ORA SU DISCO"):
     save_data_to_disk()
     st.success("Salvato.")
+# =========================
+# REPORT CACHE (GLOBAL)
+# =========================
+@st.cache_data(show_spinner=False)
+def _cached_report_bytes(payload_json: str, meta_json: str) -> bytes:
+    payload = json.loads(payload_json) if payload_json else {}
+    meta = json.loads(meta_json) if meta_json else {}
+    return make_html_report_bytes(
+        squads=payload.get("squadre", {}),
+        brogliaccio=payload.get("brogliaccio", []),
+        center=payload.get("center", []),
+        meta=meta,
+    )
+
+
+
+# =========================
+# FOOTER
+# =========================
+st.markdown("""
+<style>
+.pc-footer{position:fixed;bottom:0;left:0;width:100%;z-index:999;
+background:#0d1b2a;color:#ffffffcc;text-align:center;padding:6px 0;font-size:.75rem;}
+.pc-footer b{color:#fff;}
+</style>
+<div class="pc-footer"><b>Protezione Civile Thiene</b> · Powered by <b>JokArt</b></div>
+""", unsafe_allow_html=True)
+
+
+# =========================
+# FOOTER
+# =========================
+st.markdown("""
+<style>
+.footer {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  background: #0d1b2a;
+  color: rgba(255,255,255,.85);
+  text-align: center;
+  padding: 7px 10px;
+  font-size: 0.72rem;
+  z-index: 999;
+  border-top: 1px solid rgba(255,255,255,.12);
+}
+.footer .row {
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+  justify-content:center;
+  align-items:center;
+  line-height: 1.15;
+}
+.footer b { color: #fff; }
+.footer .sep { opacity:.55; }
+@media (max-width: 520px){
+  .footer { font-size: 0.68rem; padding: 8px 8px; }
+}
+/* evita che il contenuto venga coperto dal footer */
+section.main .block-container { padding-bottom: 3.2rem; }
+</style>
+<div class="footer">
+  <div class="row">
+    <b>Gruppo Comunale Volontari Protezione Civile Thiene</b>
+    <span class="sep">•</span>
+    <span>Via dell'Aeroporto 33, Thiene</span>
+    <span class="sep">•</span>
+    <span>pcthiene@gmail.com</span>
+    <span class="sep">•</span>
+    <span>Powered by <b>JokArt</b> · 2026</span>
+  </div>
+</div>
+""", unsafe_allow_html=True)

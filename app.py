@@ -1,4 +1,130 @@
 import streamlit as st
+import streamlit.components.v1 as components
+import time
+
+# =========================
+# TOKEN QR / LINK SQUADRA
+# =========================
+TOKEN_TTL_HOURS = 24
+
+def _safe_float(val, default=0.0):
+    """Convert val to float safely (handles '', None, commas)."""
+    try:
+        if val is None:
+            return float(default)
+        if isinstance(val, (int, float)):
+            return float(val)
+        s = str(val).strip()
+        if s == "":
+            return float(default)
+        s = s.replace(",", ".")
+        return float(s)
+    except Exception:
+        return float(default)
+
+
+
+
+def render_clock_in_sidebar(show_stopwatch: bool = True):
+    """
+    Orologio ultra-compatto in sidebar, aggiornamento ogni secondo via JS, tempo in UTC.
+    Evita tagli: iframe height conservativo + layout elastico (no height fissa).
+    """
+    import streamlit as st
+    import streamlit.components.v1 as components
+
+    clock_html = f"""
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  html, body {{
+    margin: 0;
+    padding: 0;
+    height: auto;
+    overflow: visible !important;
+    background: transparent;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  }}
+  .clock-card {{
+    width: 100%;
+    background: #0e2a47;
+    border-radius: 12px;
+    padding: 6px 10px 8px 10px;
+    box-sizing: border-box;
+  }}
+  .row {{
+    display: flex;
+    align-items: baseline;
+    justify-content: center;
+    gap: 6px;
+  }}
+  .time {{
+    font-size: 1.45rem;
+    font-weight: 800;
+    letter-spacing: 1px;
+    line-height: 1.2;
+    color: #ffffff;
+    text-align: center;
+    white-space: nowrap;
+  }}
+  .sec {{
+    font-size: 0.72rem;
+    opacity: 0.78;
+    font-weight: 700;
+  }}
+  .utc {{
+    font-size: 0.70rem;
+    opacity: 0.85;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.12);
+    color: #ffffff;
+    line-height: 1;
+  }}
+  .sw {{
+    margin-top: 2px;
+    text-align: center;
+    font-size: 0.70rem;
+    opacity: 0.82;
+    color: #ffffff;
+    line-height: 1.1;
+    white-space: nowrap;
+  }}
+</style>
+</head>
+<body>
+  <div class="clock-card">
+    <div class="row">
+      <div class="time" id="t">--:--<span class="sec">:--</span></div>
+      <div class="utc">UTC</div>
+    </div>
+    {"<div class='sw'>⏱ Cronometro pronto</div>" if show_stopwatch else ""}
+  </div>
+
+<script>
+  function pad2(n) {{ return String(n).padStart(2, '0'); }}
+
+  function tickUTC() {{
+    const d = new Date();
+    const hh = pad2(d.getUTCHours());
+    const mm = pad2(d.getUTCMinutes());
+    const ss = pad2(d.getUTCSeconds());
+    const el = document.getElementById("t");
+    el.innerHTML = `${{hh}}:${{mm}}<span class="sec">:${{ss}}</span>`;
+  }}
+
+  tickUTC();
+  setInterval(tickUTC, 1000);
+</script>
+</body>
+</html>
+"""
+    # Height conservativo per evitare tagli su zoom/DPI diversi
+    components.html(clock_html, height=96)
+
 import pandas as pd
 from datetime import datetime, timedelta
 import folium
@@ -6,10 +132,12 @@ from branca.element import Template, MacroElement
 from streamlit_folium import st_folium
 import os
 import socket
+import re
 import base64
 import json
 import uuid
 import urllib.parse
+import urllib.request
 import qrcode
 from io import BytesIO
 from typing import Optional, Tuple, Dict, Any, List
@@ -79,6 +207,218 @@ def _merge_template_text(user_text: str) -> str:
 def _b64_encode_bytes(b: bytes) -> str:
     return base64.b64encode(b).decode("ascii")
 
+
+# =========================
+# CLOCK (SIDEBAR) – digitale + cronometro (JS, compatto)
+# =========================
+def render_clock_in_sidebar(show_stopwatch: bool = True) -> None:
+    """
+    Orologio digitale compatto + cronometro (tutto client-side).
+    Non richiede rerun di Streamlit: si aggiorna via JS.
+    """
+    height = 156 if show_stopwatch else 86  # extra height to avoid iframe clipping
+    html = f"""
+    <style>
+      .pc-clock-card {{
+        background: rgba(17, 24, 39, 0.92);
+        border: 1px solid rgba(148, 163, 184, 0.35);
+        border-radius: 14px;
+        padding: 10px 10px 12px 10px; /* + spazio sotto (evita taglio) */
+        margin: -6px 0 6px 0; /* più compatto */
+        color: #fff;
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+        user-select: none;
+        min-height: 68px;          /* evita clipping contenuto */
+        overflow: visible !important;
+      }}
+
+      /* sidebar: non tagliare l'iframe del clock */
+      section[data-testid="stSidebar"], 
+      section[data-testid="stSidebar"] > div {{
+        overflow: visible !important;
+      }}
+
+      .pc-clock-row {{
+        display:flex; align-items:baseline; justify-content:space-between;
+      }}
+      .pc-time {{
+        letter-spacing: 0.03em;
+        font-weight: 900;
+        font-size: 20px;
+        line-height: 1;
+      }}
+      .pc-colon {{
+        animation: pcBlink 1s steps(1) infinite;
+        display:inline-block;
+        width: 7px;
+        text-align:center;
+      }}
+      @keyframes pcBlink {{ 50% {{ opacity: .18; }} }}
+      .pc-sec {{
+        font-weight: 800;
+        font-size: 12px;
+        opacity: .80;
+        margin-left: 6px;
+      }}
+      .pc-date {{
+        font-size: 11px;
+        opacity: .70;
+        margin-top: 4px;
+      }}
+      .pc-sw {{
+        margin-top: 8px;
+        padding-top: 8px;
+        border-top: 1px dashed rgba(148,163,184,.35);
+      }}
+      .pc-sw-time {{
+        font-weight: 900;
+        font-size: 16px;
+        letter-spacing: 0.02em;
+        line-height: 1;
+      }}
+      .pc-sw-controls {{
+        display:flex; gap:6px; margin-top: 6px;
+      }}
+      .pc-btn {{
+        flex:1;
+        border: 1px solid rgba(148,163,184,.35);
+        background: rgba(255,255,255,.06);
+        color: #fff;
+        border-radius: 10px;
+        padding: 6px 8px;
+        font-size: 12px;
+        font-weight: 800;
+        cursor: pointer;
+      }}
+      .pc-btn:active {{
+        transform: translateY(1px);
+      }}
+      .pc-btn.primary {{
+        background: rgba(59,130,246,.22);
+        border-color: rgba(59,130,246,.55);
+      }}
+      .pc-mini {{
+        font-size: 10px;
+        opacity: .65;
+        margin-top: 4px;
+      }}
+    </style>
+
+    <div class="pc-clock-card">
+      <div class="pc-clock-row">
+        <div class="pc-time">
+          <span id="pc_hh">--</span><span class="pc-colon">:</span><span id="pc_mm">--</span>
+          <span class="pc-sec" id="pc_ss">--</span>
+        </div>
+        <div style="font-size:11px;opacity:.75;font-weight:800">🕒</div>
+      </div>
+      <div class="pc-date" id="pc_date">--</div>
+
+      {('<div class="pc-sw">'
+         '<div class="pc-sw-time" id="pc_sw">00:00.0</div>'
+         '<div class="pc-sw-controls">'
+         '  <button class="pc-btn primary" id="pc_sw_toggle">▶︎</button>'
+         '  <button class="pc-btn" id="pc_sw_reset">⟲</button>'
+         '</div>'
+         '<div class="pc-mini">Cronometro locale (non richiede refresh)</div>'
+         '</div>') if show_stopwatch else ''}
+    </div>
+
+    <script>
+      const pad2 = (n) => String(n).padStart(2,'0');
+
+      // --- CLOCK ---
+      function tickClock(){{
+        const d = new Date();
+        document.getElementById('pc_hh').textContent = pad2(d.getHours());
+        document.getElementById('pc_mm').textContent = pad2(d.getMinutes());
+        document.getElementById('pc_ss').textContent = pad2(d.getSeconds());
+        const opts = {{ weekday:'short', year:'numeric', month:'2-digit', day:'2-digit' }};
+        document.getElementById('pc_date').textContent = d.toLocaleDateString(undefined, opts);
+      }}
+      tickClock();
+      setInterval(tickClock, 250);
+
+      // --- STOPWATCH (persist in localStorage) ---
+      const hasSW = {str(show_stopwatch).lower()};
+      if (hasSW) {{
+        const K_RUN = 'pc_sw_running_v1';
+        const K_ELA = 'pc_sw_elapsed_v1'; // ms
+        const K_T0  = 'pc_sw_t0_v1';      // ms epoch
+
+        let running = (localStorage.getItem(K_RUN) === '1');
+        let elapsed = parseFloat(localStorage.getItem(K_ELA) || '0');
+        let t0 = parseFloat(localStorage.getItem(K_T0) || '0');
+
+        const elSW = document.getElementById('pc_sw');
+        const btnToggle = document.getElementById('pc_sw_toggle');
+        const btnReset  = document.getElementById('pc_sw_reset');
+
+        function format(ms){{
+          const t = Math.max(0, ms);
+          const totalSec = Math.floor(t/1000);
+          const min = Math.floor(totalSec/60);
+          const sec = totalSec % 60;
+          const tenth = Math.floor((t % 1000) / 100);
+          return `${{pad2(min)}}:${{pad2(sec)}}.${{tenth}}`;
+        }}
+
+        function save(){{
+          localStorage.setItem(K_RUN, running ? '1' : '0');
+          localStorage.setItem(K_ELA, String(elapsed));
+          localStorage.setItem(K_T0, String(t0));
+        }}
+
+        function updateBtn(){{
+          btnToggle.textContent = running ? '⏸' : '▶︎';
+        }}
+
+        function nowMs(){{ return (new Date()).getTime(); }}
+
+        function render(){{
+          let cur = elapsed;
+          if (running) {{
+            cur = elapsed + (nowMs() - t0);
+          }}
+          elSW.textContent = format(cur);
+          requestAnimationFrame(render);
+        }}
+
+        btnToggle.addEventListener('click', () => {{
+          if (!running) {{
+            running = true;
+            t0 = nowMs();
+          }} else {{
+            running = false;
+            elapsed = elapsed + (nowMs() - t0);
+          }}
+          updateBtn();
+          save();
+        }});
+
+        btnReset.addEventListener('click', () => {{
+          running = false;
+          elapsed = 0;
+          t0 = 0;
+          updateBtn();
+          save();
+          elSW.textContent = format(0);
+        }});
+
+        // init
+        updateBtn();
+        // if running but missing t0, fix
+        if (running && (!t0 || isNaN(t0))) {{
+          t0 = nowMs();
+          save();
+        }}
+        requestAnimationFrame(render);
+      }}
+    </script>
+    """
+    components.html(html, height=height, scrolling=False)
+
+
 def _b64_decode_bytes(s: str) -> bytes:
     return base64.b64decode(s.encode("ascii"))
 
@@ -112,46 +452,244 @@ def _photo_to_bytes(photo) -> Optional[bytes]:
 # CONFIG
 # =========================
 st.set_page_config(page_title="RADIO MANAGER - PROTEZIONE CIVILE THIENE", layout="wide")
+# =========================
+# UI THEME – CONSISTENZA & COMPATTEZZA (v77)
+# =========================
+st.markdown(
+    """
+<style>
+  :root{
+    --pc-navy:#0e2a47;
+    --pc-navy-2:#0b2138;
+    --pc-blue:#1e88e5;
+    --pc-bg:#f6f8fb;
+    --pc-card:#ffffff;
+    --pc-border: rgba(15,23,42,.14);
+    --pc-text:#0f172a;
+    --pc-muted: rgba(15,23,42,.72);
+    --pc-radius:16px;
+  }
+
+  /* Sfondo app */
+  .stApp{
+    background: var(--pc-bg);
+    color: var(--pc-text);
+  }
+
+  /* Card uniformi */
+  .pc-card{
+    background: var(--pc-card) !important;
+    border: 1px solid var(--pc-border) !important;
+    border-radius: var(--pc-radius) !important;
+  }
+
+  /* Card OPERATORE RADIO (colore diverso) */
+  .pc-card-radio{
+    background: rgba(30,136,229,.08) !important;
+    border: 1px solid rgba(30,136,229,.28) !important;
+  }
+
+  /* Sidebar più compatta e leggibile */
+  section[data-testid="stSidebar"]{
+    background: var(--pc-navy) !important;
+  }
+  section[data-testid="stSidebar"] .block-container{
+    padding-top: .7rem !important;
+    padding-bottom: .7rem !important;
+  }
+  section[data-testid="stSidebar"] .stMarkdown{
+    margin-bottom: .35rem !important;
+  }
+  section[data-testid="stSidebar"] .stButton{
+    margin-top: .25rem !important;
+    margin-bottom: .25rem !important;
+  }
+
+  /* Input: testo sempre ben leggibile su sfondi chiari */
+  .stTextInput input, .stTextArea textarea, .stSelectbox div[data-baseweb="select"] > div{
+    color: var(--pc-text) !important;
+  }
+
+  /* Bottoni: testo scuro quando lo sfondo è chiaro */
+  button[kind="secondary"], button[kind="tertiary"]{
+    color: var(--pc-text) !important;
+    font-weight: 800 !important;
+  }
+  /* Primary: mantenere leggibilità */
+  button[kind="primary"]{
+    font-weight: 900 !important;
+  }
+
+  /* Riduci gli spazi verticali dei container Streamlit */
+  div[data-testid="stVerticalBlock"] > div{
+    gap: .55rem !important;
+  }
+</style>
+    """,
+    unsafe_allow_html=True,
+)
 
 
 
+
+
+
+
+
+
+
+
+
+# =========================
+# QR MODE + SICUREZZA RUOLI
+# =========================
+try:
+    qp = dict(st.query_params)  # Streamlit >= 1.30
+except Exception:
+    try:
+        qp = st.experimental_get_query_params()
+    except Exception:
+        qp = {}
+
+def _qp_first(key, default=""):
+    v = qp.get(key, default)
+    if isinstance(v, (list, tuple)):
+        return (v[0] if v else default)
+    return v
+
+_q_mode = (_qp_first("mode", "") or _qp_first("ruolo", "") or _qp_first("role", "")).strip().lower()
+LOCK_CAPO = _q_mode in {"capo", "caposquadra", "capo_squadra", "caposq", "c"}
+LOCK_CAMPO = _q_mode in {"campo", "field", "modulo_campo", "modulo-campo", "camp"}
+LOCK_FIELD = LOCK_CAPO or LOCK_CAMPO
+
+
+
+
+if LOCK_FIELD:
+    st.markdown("""
+    <style>
+      /* Nasconde completamente la sidebar */
+      section[data-testid="stSidebar"] { display: none !important; }
+      div[data-testid="stSidebar"] { display: none !important; }
+      nav[data-testid="stSidebarNav"] { display: none !important; }
+
+      /* Nasconde il controllo di riapertura */
+      div[data-testid="collapsedControl"] { display: none !important; }
+      button[data-testid="baseButton-headerNoPadding"] { display:none !important; }
+
+      /* Toolbar */
+      header [data-testid="stToolbar"] { visibility: hidden !important; height: 0 !important; }
+      header { min-height: 0 !important; }
+
+      /* Padding pagina mobile più stretto */
+      .block-container { padding-top: .6rem !important; padding-left: .75rem !important; padding-right: .75rem !important; }
+    </style>
+    """, unsafe_allow_html=True)
+
+
+
+
+# =========================
+# TOP SPACING – TITOLO A FILO (v81)
+# =========================
+st.markdown(
+    """
+<style>
+  /* Togli aria sopra la pagina (più aggressivo) */
+  [data-testid="stAppViewContainer"]{
+    padding-top: 0 !important;
+  }
+  [data-testid="stAppViewContainer"] .main{
+    padding-top: 0 !important;
+    margin-top: 0 !important;
+  }
+
+  /* Header Streamlit: elimina spazio residuo */
+  header[data-testid="stHeader"],
+  [data-testid="stHeader"]{
+    display: none !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* Container principale: a filo */
+  [data-testid="stAppViewContainer"] .main .block-container,
+  .main .block-container,
+  section.main .block-container{
+    padding-top: 0rem !important;
+    margin-top: 0rem !important;
+  }
+
+  /* Titoli: niente margine sopra */
+  .stMarkdown h1, .stMarkdown h2, .stMarkdown h3,
+  div[data-testid="stMarkdownContainer"] h1,
+  div[data-testid="stMarkdownContainer"] h2,
+  div[data-testid="stMarkdownContainer"] h3{
+    margin-top: 0 !important;
+    padding-top: 0 !important;
+  }
+
+  /* Primo blocco del main: “tira su” ancora un filo */
+  [data-testid="stAppViewContainer"] .main .block-container > div:first-child{
+    margin-top: -0.65rem !important;
+  }
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
+# =========================
+# FIX TITOLI MODULO CAMPO (mobile)
+# =========================
 st.markdown("""
 <style>
-/* --- ANTI SCROLL ORIZZONTALE (mobile) --- */
-html, body { overflow-x: hidden !important; }
-[data-testid="stAppViewContainer"], [data-testid="stMain"], [data-testid="stHeader"], [data-testid="stSidebar"], .stApp {
-  overflow-x: hidden !important;
-}
-div[data-testid="stHorizontalBlock"] { flex-wrap: wrap !important; }
-div[data-testid="column"] { min-width: 0 !important; }
-.stRadio [role="radiogroup"] { flex-wrap: wrap !important; }
-
-<style>
-/* ==== Stato Connessione: bottoni SOLO ICONE ==== */
-.conn-card div[data-testid="stButton"] > button {
-  font-size: 0 !important;            /* nasconde il testo */
-  padding: 0.55rem 0.7rem !important;
-}
-.conn-card div[data-testid="stButton"] > button::before {
-  font-size: 1.1rem !important;       /* dimensione icona */
+/* Titolo: compatto e non tagliato */
+.campo-title,
+.modulo-campo-title,
+div[data-testid="stMarkdownContainer"] h1,
+div[data-testid="stMarkdownContainer"] h2,
+div[data-testid="stMarkdownContainer"] h3 {
+  line-height: 1.22 !important;
 }
 
-<style>
-/* Squad cards highlight */
-.squad-card {
-  border-left: 5px solid var(--squad-color, #1e88e5);
-  padding-left: .5rem;
+/* Riduci spazio tra bordo superiore e titolo */
+.main .block-container {
+  padding-top: 0.45rem !important;
 }
-</style>
 
-</style>
+div[data-testid="stMarkdownContainer"] h1 {
+  margin-top: 0.15rem !important;
+  padding-top: 0 !important;
+}
 
+@media (max-width: 768px) {
+  .main .block-container {
+    padding-top: 0.28rem !important;
+  }
+  div[data-testid="stMarkdownContainer"] h1 {
+    margin-top: 0.10rem !important;
+  }
+}
 </style>
 """, unsafe_allow_html=True)
 
-TOKEN_TTL_HOURS = 12  # durata token caposquadra
 
 
+
+st.session_state["AUTH_SALA_OK"] = True  # nessun secondo PIN: Sala sempre disponibile dopo accesso iniziale
+
+
+def _sync_ruolo_from_sel():
+    st.session_state["ruolo_ui"] = st.session_state.get("ruolo_sel", "MODULO CAPOSQUADRA")
+
+def ensure_sala_auth():
+    """Accesso Sala Operativa: nessun secondo PIN.
+    La Sala Radio è disponibile dopo l'accesso iniziale dell'app.
+    """
+    st.session_state["AUTH_SALA_OK"] = True
+    return True
 
 
 # =========================
@@ -244,6 +782,19 @@ def _guess_public_url() -> str:
         pass
 
     return ""
+
+def _public_ip(timeout: float = 2.0) -> str:
+    """Ritorna l'IP pubblico (WAN) del router visto da Internet. Se non disponibile, stringa vuota."""
+    try:
+        with urllib.request.urlopen("https://api.ipify.org", timeout=timeout) as r:
+            ip = (r.read() or b"").decode("utf-8", errors="ignore").strip()
+        # sanity
+        if ip and re.match(r"^\d{1,3}(?:\.\d{1,3}){3}$", ip):
+            return ip
+    except Exception:
+        pass
+    return ""
+
 def compute_net_state(force_offline: bool, port: int) -> dict:
     ip = _local_ip()
     internet = _has_internet()
@@ -254,10 +805,35 @@ def compute_net_state(force_offline: bool, port: int) -> dict:
     lan_only = (not offline) and (not internet) and lan
 
     effective_url = ""
+    source = ""
+    public_ip = ""
+
     if lan_only:
         effective_url = f"http://{ip}:{port}"
+        source = "lan"
     elif online:
-        effective_url = (st.session_state.get("PUBLIC_URL") or "").strip()
+        # 1) se impostato manualmente (secrets/env/sidebar), usa quello
+        candidate = (st.session_state.get("PUBLIC_URL") or "").strip().rstrip("/")
+        if candidate:
+            effective_url = candidate
+            source = "public_url"
+        else:
+            # 2) prova a ricavare l'host dalla request (Streamlit Cloud / reverse proxy)
+            candidate = (_guess_public_url() or "").strip().rstrip("/")
+            if candidate:
+                effective_url = candidate
+                source = "guess_request"
+            else:
+                # 3) fallback: IP pubblico WAN (richiede Internet)
+                public_ip = _public_ip()
+                if public_ip:
+                    effective_url = f"http://{public_ip}:{port}"
+                    source = "public_ip"
+                elif lan:
+                    # 4) ultimissimo: LAN (almeno funziona in sede)
+                    effective_url = f"http://{ip}:{port}"
+                    source = "lan_fallback"
+
     return {
         "ip": ip,
         "port": port,
@@ -267,7 +843,10 @@ def compute_net_state(force_offline: bool, port: int) -> dict:
         "online": online,
         "lan_only": lan_only,
         "effective_url": effective_url,
+        "public_ip": public_ip,
+        "source": source,
     }
+
 
 
 DATA_PATH = "data.json"
@@ -394,6 +973,34 @@ def chip_stato(stato: str) -> str:
         f"<span class='pc-chip' style='background:{bg};color:{fg};'>"
         f"<span class='pc-dot'></span>{stato}</span>"
     )
+
+def _get_last_team_status(team: str) -> str:
+    """Ritorna ultimo stato noto per la squadra: prima quello salvato in anagrafica, poi dal brogliaccio."""
+    try:
+        st0 = (st.session_state.squadre.get(team, {}) or {}).get("stato")
+        if st0:
+            return st0
+    except Exception:
+        pass
+    # fallback: cerca nel brogliaccio l'ultimo evento con st valorizzato
+    try:
+        for ev in st.session_state.get("brogliaccio", []):
+            if ev.get("sq") == team and ev.get("st"):
+                return ev.get("st")
+    except Exception:
+        pass
+    # default
+    return list(COLORI_STATI.keys())[0]
+
+def _sync_radio_status_to_team():
+    """Quando cambia la squadra selezionata nel modulo radio, imposta lo stato al valore più recente di quella squadra."""
+    team = st.session_state.get("radio_squadra_sel")
+    if not team:
+        return
+    st_last = _get_last_team_status(team)
+    # Imposta solo se diverso (evita loop) e se valido
+    if st_last in COLORI_STATI and st.session_state.get("radio_stato_sel") != st_last:
+        st.session_state["radio_stato_sel"] = st_last
 
 def get_squadra_info(nome_sq: str) -> Dict[str, Any]:
     info = st.session_state.squadre.get(nome_sq, {})
@@ -854,7 +1461,45 @@ def make_html_report_bytes(
     def _df_to_html_table(df_view: pd.DataFrame) -> str:
         if df_view is None or df_view.empty:
             return "<div class='muted'>Nessun dato presente.</div>"
-        return df_view.to_html(index=False, classes="tbl", escape=True)
+
+        dfv = df_view.copy()
+
+        # Normalizza colonne principali
+        if "ora" not in dfv.columns and "t" in dfv.columns:
+            dfv["ora"] = dfv["t"]
+        if "mit" not in dfv.columns:
+            dfv["mit"] = ""
+        if "ris" not in dfv.columns:
+            dfv["ris"] = ""
+
+        # Coord in formato leggibile
+        if "pos" in dfv.columns and "coord" not in dfv.columns:
+            def _fmt_pos(p):
+                try:
+                    if isinstance(p, (list, tuple)) and len(p) == 2:
+                        return f"{float(p[0]):.6f}, {float(p[1]):.6f}"
+                except Exception:
+                    return ""
+                return ""
+            dfv["coord"] = dfv["pos"].apply(_fmt_pos)
+
+        # Ordine + etichette per report
+        col_order = ["ora", "sq", "chi", "st", "mit", "ris", "op", "coord"]
+        col_labels = {
+            "ora": "Ora",
+            "sq": "Squadra",
+            "chi": "Chiamante",
+            "st": "Stato",
+            "mit": "Messaggio",
+            "ris": "Risposta",
+            "op": "Operatore",
+            "coord": "Coordinate",
+        }
+        keep = [c for c in col_order if c in dfv.columns]
+        dfv = dfv[keep].rename(columns=col_labels)
+
+        return dfv.to_html(index=False, classes="tbl", escape=True)
+
 
     # ---- meta
     ev_data = _safe(str(meta.get("ev_data", "")))
@@ -1471,6 +2116,50 @@ def load_data_from_disk():
     ensure_inbox_ids()
     return True
 
+
+# =========================
+# AUTO-REFRESH smart (solo nuovi eventi + pausa durante scrittura)
+# =========================
+def _disk_events_signature() -> str:
+    """Firma leggera degli eventi (inbox+brogliaccio) letta da disco.
+    Serve per capire se sono arrivati nuovi eventi senza rifare render pesanti.
+    """
+    try:
+        if not os.path.exists(DATA_PATH):
+            return "no-data"
+        with open(DATA_PATH, "r", encoding="utf-8") as f:
+            payload = json.load(f) or {}
+        inbox = payload.get("inbox", []) or []
+        brog = payload.get("brogliaccio", []) or []
+        last_in = (inbox[-1].get("id") if inbox else "") or ""
+        last_br = (brog[-1].get("id") if brog else "") or ""
+        # include anche le lunghezze per robustezza
+        return f"i{len(inbox)}:{last_in}|b{len(brog)}:{last_br}"
+    except Exception:
+        return "sig-err"
+
+def _mark_typing(ttl_seconds: int = 20) -> None:
+    """Segna che l'utente sta scrivendo: sospende l'auto-refresh per un po'."""
+    try:
+        st.session_state["_typing_until"] = time.time() + int(ttl_seconds)
+    except Exception:
+        pass
+
+def _is_user_typing() -> bool:
+    try:
+        return time.time() < float(st.session_state.get("_typing_until", 0) or 0)
+    except Exception:
+        return False
+
+def _fmt_last_update(ts: float | None) -> str:
+    try:
+        if not ts:
+            return "—"
+        dt = datetime.fromtimestamp(float(ts))
+        return dt.strftime("%H:%M:%S")
+    except Exception:
+        return "—"
+
 def load_data_from_uploaded_json(file_bytes: bytes):
     payload = json.loads(file_bytes.decode("utf-8"))
     st.session_state.brogliaccio = payload.get("brogliaccio", [])
@@ -1773,13 +2462,29 @@ if (not st.session_state.get("auth_ok")) and (not st.session_state.get("field_ok
 # =========================
 # Auto aggiornamento (SOFT): evita reload pagina (non perde login)
 if st.session_state.get("auth_ok") and (not st.session_state.get("field_ok")) and st.session_state.get("AUTO_REFRESH", True):
-    sec = int(st.session_state.get("AUTO_REFRESH_SEC") or 3)
-    try:
-        from streamlit_autorefresh import st_autorefresh  # pip install streamlit-autorefresh (se serve)
-        st_autorefresh(interval=sec * 1000, key="sala_autorefresh")
-    except Exception:
-        # Nessun auto refresh disponibile: usa il pulsante "Aggiorna" o disattiva Auto aggiorna.
-        pass
+    # 🧭 indicatore ultimo aggiornamento (ogni run)
+    st.session_state["_last_update_ts"] = time.time()
+
+    # 🔕 pausa automatica refresh quando scrivi (evita reset/scroll mentre compili messaggi)
+    if not _is_user_typing():
+        sec = int(st.session_state.get("AUTO_REFRESH_SEC") or 20)
+
+        # 📡 refresh solo su nuovi eventi:
+        # - se firma eventi è cambiata → usa intervallo selezionato
+        # - se non cambia → rallenta a 60s per ridurre reload inutili
+        cur_sig = _disk_events_signature()
+        last_sig = st.session_state.get("_last_events_sig")
+        new_events = (last_sig is None) or (cur_sig != last_sig)
+        st.session_state["_last_events_sig"] = cur_sig
+
+        interval_ms = (sec * 1000) if new_events else 60000  # 60s quando non arrivano novità
+
+        try:
+            from streamlit_autorefresh import st_autorefresh  # pip install streamlit-autorefresh (se serve)
+            st_autorefresh(interval=interval_ms, key=f"sala_autorefresh_{sec}_{'new' if new_events else 'idle'}")
+        except Exception:
+            # Nessun auto refresh disponibile: usa il pulsante "Aggiorna" o disattiva Auto aggiorna.
+            pass
 
 
 
@@ -2116,12 +2821,114 @@ section[data-testid="stSidebar"] div[data-testid="stExpander"] button[kind="seco
 </style>
 """, unsafe_allow_html=True)
 
+st.markdown("""
+<style>
+/* === CENTRO DI CONTROLLO (TOP) === */
+.ctrl-card{
+  width:100%;
+  background:#ffe9a8;
+  border:1px solid rgba(0,0,0,.12);
+  border-radius:12px;
+  padding:10px 10px 10px 10px;
+  margin-bottom:6px;
+  box-sizing:border-box;
+}
+.ctrl-title{
+  text-align:center;
+  font-size:0.78rem;
+  font-weight:950;
+  letter-spacing:.7px;
+  text-transform:uppercase;
+  color:#0f172a;
+}
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown("""
+<style>
+/* === SIDEBAR KPI CARD === */
+.sidebar-kpi-card{
+  width:100%;
+  background:#0e2a47;
+  border-radius:12px;
+  padding:8px 10px 8px 10px;
+  box-sizing:border-box;
+  margin-top:4px;
+  margin-bottom:2px;
+}
+.sidebar-kpi-grid{
+  display:grid;
+  grid-template-columns: 1fr 1fr;
+  gap:8px;
+}
+.sidebar-kpi-item{
+  background: rgba(255,255,255,0.10);
+  border-radius:10px;
+  padding:8px 8px;
+  text-align:center;
+}
+.sidebar-kpi-num{
+  font-size:1.25rem;
+  font-weight:800;
+  line-height:1.1;
+  color:#fff;
+}
+.sidebar-kpi-lab{
+  margin-top:2px;
+  font-size:0.72rem;
+  font-weight:700;
+  opacity:0.9;
+  color:#fff;
+  line-height:1.1;
+}
+</style>
+""", unsafe_allow_html=True)
+
 # =========================
 # SIDEBAR
 # =========================
 with st.sidebar:
 
-        # --- STATO CONNESSIONE (OFFLINE / LAN / ONLINE) ---
+    # 🧭 Centro di Controllo – Selezione ruolo (TOP)
+    st.markdown("""<div class='ctrl-card'><div class='ctrl-title'>CENTRO DI CONTROLLO</div></div>""", unsafe_allow_html=True)
+    
+    # 🧭 Selettore ruolo (safe): lock da QR e richiesta PIN per Sala
+    if "ruolo_ui" not in st.session_state:
+        st.session_state["ruolo_ui"] = "SALA OPERATIVA"
+
+    if LOCK_FIELD:
+        st.session_state["ruolo_ui"] = "MODULO CAPOSQUADRA"
+        st.session_state["ruolo_sel"] = "MODULO CAPOSQUADRA"
+        opzioni_ruolo = ["MODULO CAPOSQUADRA"]
+    else:
+        can_sala = bool(st.session_state.get("AUTH_SALA_OK", False))
+        if not can_sala:
+            # senza PIN: si può usare solo Caposquadra (Sala non selezionabile)
+            st.session_state["ruolo_ui"] = "MODULO CAPOSQUADRA"
+            st.session_state["ruolo_sel"] = "MODULO CAPOSQUADRA"
+            opzioni_ruolo = ["MODULO CAPOSQUADRA"]
+        else:
+            opzioni_ruolo = ["SALA OPERATIVA", "MODULO CAPOSQUADRA"]
+            if "ruolo_sel" not in st.session_state:
+                st.session_state["ruolo_sel"] = st.session_state.get("ruolo_ui", "SALA OPERATIVA")
+
+    st.radio(
+        "Ruolo operativo",
+        opzioni_ruolo,
+        horizontal=True,
+        label_visibility="collapsed",
+        key="ruolo_sel",
+        on_change=_sync_ruolo_from_sel,
+        disabled=LOCK_FIELD
+    )
+    _sync_ruolo_from_sel()
+
+    if LOCK_FIELD:
+        st.caption("🔒 Accesso da QR/Link Modulo Campo: Sala Operativa bloccata.")
+    elif not st.session_state.get("AUTH_SALA_OK", False):
+        st.caption("🔐 Sala Operativa protetta: inserisci PIN per sbloccare.")
+        ensure_sala_auth()
+# --- STATO CONNESSIONE (OFFLINE / LAN / ONLINE) ---
     st.markdown(
         """
         <style>
@@ -2155,16 +2962,25 @@ with st.sidebar:
         if "AUTO_REFRESH" not in st.session_state:
             st.session_state["AUTO_REFRESH"] = True
         if "AUTO_REFRESH_SEC" not in st.session_state:
-            st.session_state["AUTO_REFRESH_SEC"] = 3
+            st.session_state["AUTO_REFRESH_SEC"] = 20
 
         st.toggle("Auto aggiorna", key="AUTO_REFRESH")
+        # Intervallo auto-refresh (secondi)
+        _opts = [10, 20, 30, 60]
+        _cur = int(st.session_state.get("AUTO_REFRESH_SEC") or 20)
+        if _cur not in _opts:
+            # se arriva da versioni precedenti (2/3/5/15), riallinea ad un valore valido
+            _cur = min(_opts, key=lambda x: abs(x - _cur))
+            st.session_state["AUTO_REFRESH_SEC"] = _cur
         st.session_state["AUTO_REFRESH_SEC"] = st.select_slider(
             "Intervallo (s)",
-            options=[2,3,5,10,15],
-            value=int(st.session_state.get("AUTO_REFRESH_SEC") or 3),
+            options=_opts,
+            value=_cur,
         )
         if st.button("🔄", help="Aggiorna ora"):
             st.rerun()
+
+        st.caption(f"🧭 Ultimo aggiornamento: {_fmt_last_update(st.session_state.get('_last_update_ts'))}")
 
         ip = _local_ip()
         internet = _has_internet()
@@ -2229,16 +3045,44 @@ with st.sidebar:
         st.session_state.NET_LAN_ONLY = lan_only
         st.session_state.NET_ONLINE = online
 
+    # ⏱️ Orologio (UTC) sotto Stato Connessione
+    render_clock_in_sidebar(show_stopwatch=True)
+    # 📊 KPI Sidebar (subito sotto orologio)
+    _squads = st.session_state.get("squadre", None)
+    try:
+        squadre_registrate = len(_squads) if _squads is not None else 0
+    except Exception:
+        squadre_registrate = 0
+
+    _brog = st.session_state.get("brogliaccio", st.session_state.get("registro", [])) or []
+    _inbox = st.session_state.get("inbox", st.session_state.get("avvisi_inbox", st.session_state.get("inbox_avvisi", []))) or []
+    try:
+        comunicazioni_effettuate = int(len(_brog)) + int(len(_inbox))
+    except Exception:
+        comunicazioni_effettuate = 0
+
+    st.markdown(
+        f"""
+        <div class='sidebar-kpi-card'>
+          <div class='sidebar-kpi-grid'>
+            <div class='sidebar-kpi-item'>
+              <div class='sidebar-kpi-num'>👥 {squadre_registrate}</div>
+              <div class='sidebar-kpi-lab'>Squadre registrate</div>
+            </div>
+            <div class='sidebar-kpi-item'>
+              <div class='sidebar-kpi-num'>📡 {comunicazioni_effettuate}</div>
+              <div class='sidebar-kpi-lab'>Comunicazioni</div>
+            </div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
     st.divider()
 
-    st.markdown("## 🛡️ NAVIGAZIONE")
+    ruolo = st.session_state.get("ruolo_ui", "SALA OPERATIVA")
 
-    if st.session_state.get("field_ok"):
-        ruolo = "MODULO CAPOSQUADRA"
-    else:
-        ruolo = st.radio("RUOLO ATTIVO:", ["SALA OPERATIVA", "MODULO CAPOSQUADRA"])
-
-    st.divider()
+    # (Navigazione rimossa: ruolo gestito in alto)
 
     if ruolo == "SALA OPERATIVA":
         st.markdown("## ➕ SQUADRE ATTIVE")
@@ -2474,7 +3318,10 @@ with st.sidebar:
 # =========================
 logo_data_uri = img_to_base64(LOGO_PATH)
 logo_html = f"<img class='pc-logo' src='{logo_data_uri}' />" if logo_data_uri else ""
-badge_ruolo = "MODULO CAPOSQUADRA" if st.session_state.get("field_ok") else ruolo
+# Mostra il badge ruolo solo in console (non nel Modulo da Campo)
+is_field_ui = bool(st.session_state.get("field_ok")) or bool(LOCK_FIELD)
+badge_ruolo = ruolo
+badge_html = f'<div class="pc-badge">📡 {badge_ruolo}</div>' if not is_field_ui else ""
 
 st.markdown(
     f"""
@@ -2486,7 +3333,7 @@ st.markdown(
       <div class="subtitle">Radio Manager Pro · Console Operativa Sala Radio</div>
     </div>
   </div>
-  <div class="pc-badge">📡 {badge_ruolo}</div>
+  {badge_html}
 </div>
 """,
     unsafe_allow_html=True,
@@ -2496,14 +3343,20 @@ st.markdown(
 # MODULO CAPOSQUADRA
 # =========================
 if badge_ruolo == "MODULO CAPOSQUADRA":
-    st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
+    st.markdown("<div class='pc-card pc-card-radio'>", unsafe_allow_html=True)
     st.subheader("📱 Modulo da campo")
     # FIELD_UI_V3
-    c_ui1, c_ui2 = st.columns([2, 3])
-    with c_ui1:
-        sun_mode = st.toggle("☀️ Modalità Sole", value=False, help="Contrasto alto per uso in esterno")
-    with c_ui2:
+    # Header comandi (mobile friendly)
+    if LOCK_FIELD:
+        sun_mode = st.toggle("☀️ Modalità Sole", value=False, help="Contrasto alto per uso in esterno", key="sun_mode_mobile")
         st.caption("Suggerimento: usa IP in LAN (http://IP:8501) per GPS più affidabile rispetto a localhost.")
+    else:
+        c_ui1, c_ui2 = st.columns([2, 3])
+        with c_ui1:
+            sun_mode = st.toggle("☀️ Modalità Sole", value=False, help="Contrasto alto per uso in esterno")
+        with c_ui2:
+            st.caption("Suggerimento: usa IP in LAN (http://IP:8501) per GPS più affidabile rispetto a localhost.")
+
 
     _net_ok = bool(st.session_state.get("NET_ONLINE") or st.session_state.get("NET_LAN_ONLY"))
     _net_label = "🟢 Online" if st.session_state.get("NET_ONLINE") else ("🟡 LAN" if st.session_state.get("NET_LAN_ONLY") else "🔴 Offline")
@@ -2931,36 +3784,116 @@ with t_rad:
 
     with l:
         st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
-        with st.form("radio_form"):
-            st.session_state.op_name = st.text_input("OPERATORE RADIO", value=st.session_state.op_name)
-            chi = st.radio("CHI CHIAMA?", ["SALA OPERATIVA", "SQUADRA ESTERNA"])
+        # ---- Inserimento comunicazione (UI reattiva: toggle coordinate immediato) ----
+        st.session_state.op_name = st.text_input("OPERATORE RADIO", value=st.session_state.op_name, key="radio_operatore")
+        chi = st.radio("CHI CHIAMA?", ["SALA OPERATIVA", "SQUADRA ESTERNA"], key="radio_chi_chiama")
 
-            sq = st.selectbox("SQUADRA", list(st.session_state.squadre.keys()))
-            inf = get_squadra_info(sq)
-            st.caption(f"👤 Caposquadra: {inf['capo'] or '—'} · 📞 {inf['tel'] or '—'}")
+        sq = st.selectbox("SQUADRA", list(st.session_state.squadre.keys()), key="radio_squadra_sel", on_change=_sync_radio_status_to_team)
+        inf = get_squadra_info(sq)
+        st.caption(f"👤 Caposquadra: {inf['capo'] or '—'} · 📞 {inf['tel'] or '—'}")
 
-            st_s = st.selectbox("STATO", list(COLORI_STATI.keys()))
-            mit = st.text_area("MESSAGGIO")
-            ris = st.text_area("RISPOSTA")
-            st.markdown(chip_stato(st_s), unsafe_allow_html=True)
+        _stati = list(COLORI_STATI.keys())
+        _cur = st.session_state.get("radio_stato_sel")
+        _idx = _stati.index(_cur) if _cur in _stati else (_stati.index(_get_last_team_status(sq)) if sq in st.session_state.squadre else 0)
+        st_s = st.selectbox("STATO", _stati, index=_idx, key="radio_stato_sel")
 
+        # --- reset campi form radio (DEVE avvenire prima dei widget) ---
+        if st.session_state.pop("_clear_radio_form", False):
+            st.session_state["radio_messaggio"] = ""
+            st.session_state["radio_risposta"] = ""
+            st.session_state["radio_lat"] = ""
+            st.session_state["radio_lon"] = ""
+            st.session_state["radio_save_coords"] = False
+        mit = st.text_area("MESSAGGIO", key="radio_messaggio", on_change=_mark_typing)
+        ris = st.text_area("RISPOSTA", key="radio_risposta", on_change=_mark_typing)
+        st.markdown(chip_stato(st_s), unsafe_allow_html=True)
+
+        save_coords = st.toggle(
+            "📍 Salva coordinate (solo se comunicate)",
+            value=bool(st.session_state.get("radio_save_coords", False)),
+            key="radio_save_coords",
+            help="Se OFF l'evento viene salvato senza coordinate (più leggero; report senza mappa)."
+        )
+
+        lat = lon = None
+        if save_coords:
             c_g1, c_g2 = st.columns(2)
-            lat = c_g1.number_input("LAT", value=float(st.session_state.pos_mappa[0]), format="%.6f")
-            lon = c_g2.number_input("LON", value=float(st.session_state.pos_mappa[1]), format="%.6f")
+            # Normalizza valori in session_state (evita ValueError quando sono stringhe vuote)
+            st.session_state["radio_lat"] = _safe_float(st.session_state.get("radio_lat"), st.session_state.pos_mappa[0])
+            st.session_state["radio_lon"] = _safe_float(st.session_state.get("radio_lon"), st.session_state.pos_mappa[1])
 
-            if st.form_submit_button("REGISTRA A LOG"):
+            lat = c_g1.number_input("LAT", value=float(st.session_state["radio_lat"]), format="%.6f", key="radio_lat")
+            lon = c_g2.number_input("LON", value=float(st.session_state["radio_lon"]), format="%.6f", key="radio_lon")
+
+        b1, b2 = st.columns(2)
+
+        # Metti in attesa: salva SOLO testo (senza cambiare stato)
+        if b1.button("⏳ METTI IN ATTESA", use_container_width=True, key="btn_mettti_in_attesa"):
+            # Salva in coda + nel brogliaccio, ma SENZA cambiare lo stato della squadra
+            if "reply_queue" not in st.session_state:
+                st.session_state.reply_queue = []
+
+            _eid = uuid.uuid4().hex
+            _pos = ([float(lat), float(lon)] if (save_coords and lat is not None and lon is not None) else None)
+
+            st.session_state.reply_queue.insert(0, {
+                "id": _eid,
+                "ora": datetime.now().strftime("%H:%M"),
+                "chi": chi,
+                "sq": sq,
+                # Chi chiama / chi deve rispondere (la squadra è quella selezionata al momento della messa in attesa)
+                "caller_label": ("SALA OPERATIVA" if str(chi).strip().upper().startswith("SALA") else f"SQUADRA {sq}"),
+                "answerer_label": (f"SQUADRA {sq}" if str(chi).strip().upper().startswith("SALA") else "SALA OPERATIVA"),
+                # Manteniamo anche il campo storico per compatibilità (SALA/SQUADRA)
+                "attesa_da": ("SQUADRA" if str(chi).strip().upper().startswith("SALA") else "SALA"),
+                "mit": mit,
+                "op": st.session_state.op_name,
+                "pos": _pos,
+                "reply": "",
+            })
+
+            # Brogliaccio: annota il messaggio (risposta verrà compilata quando chiudi la coda)
+            try:
                 st.session_state.brogliaccio.insert(
                     0,
-                    {"ora": datetime.now().strftime("%H:%M"), "chi": chi, "sq": sq, "st": st_s,
-                     "mit": mit, "ris": ris, "op": st.session_state.op_name, "pos": [lat, lon], "foto": None}
+                    {"id": _eid,
+                     "ora": datetime.now().strftime("%H:%M"),
+                     "chi": chi,
+                     "sq": sq,
+                     "caller_label": ("SALA OPERATIVA" if str(chi).strip().upper().startswith("SALA") else f"SQUADRA {sq}"),
+                     "answerer_label": (f"SQUADRA {sq}" if str(chi).strip().upper().startswith("SALA") else "SALA OPERATIVA"),
+                     "attesa_da": ("SQUADRA" if str(chi).strip().upper().startswith("SALA") else "SALA"),
+                     "st": None,
+                     "mit": mit,
+                     "ris": "",
+                     "op": st.session_state.op_name,
+                     "pos": _pos,
+                     "foto": None,
+                     "pending": True}
                 )
-                prev_st = st.session_state.squadre.get(sq, {}).get("stato")
-                st.session_state.squadre[sq]["stato"] = st_s
-                if st_s == "Intervento concluso" and prev_st != "Intervento concluso":
-                    st.session_state.cnt_conclusi = int(st.session_state.get("cnt_conclusi", 0) or 0) + 1
-                st.session_state.pos_mappa = [lat, lon]
-                save_data_to_disk()
-                st.rerun()
+            except Exception:
+                pass
+            save_data_to_disk()
+            st.session_state["_clear_radio_form"] = True
+            st.rerun()
+
+        if b2.button("✅ REGISTRA COMUNICAZIONE", use_container_width=True, key="btn_registra_comunicazione"):
+            pos = [float(lat), float(lon)] if (save_coords and lat is not None and lon is not None) else None
+            st.session_state.brogliaccio.insert(
+                0,
+                {"ora": datetime.now().strftime("%H:%M"), "chi": chi, "sq": sq, "st": st_s,
+                 "mit": mit, "ris": ris, "op": st.session_state.op_name, "pos": pos, "foto": None}
+            )
+            prev_st = st.session_state.squadre.get(sq, {}).get("stato")
+            st.session_state.squadre[sq]["stato"] = st_s
+            if st_s == "Intervento concluso" and prev_st != "Intervento concluso":
+                st.session_state.cnt_conclusi = int(st.session_state.get("cnt_conclusi", 0) or 0) + 1
+            if pos:
+                st.session_state.pos_mappa = pos
+            save_data_to_disk()
+            st.session_state["_clear_radio_form"] = True
+            st.rerun()
+
         st.markdown("</div>", unsafe_allow_html=True)
 
     with r:
@@ -2995,6 +3928,74 @@ with t_rad:
             squad_names = sorted(list(st.session_state.squadre.keys()))
 
             ultime_pos = _latest_positions_cached(events_slice, inbox_now, squad_names)
+            # =========================
+            # ⏳ Comunicazioni in attesa (coda risposte) – sopra la mappa
+            # =========================
+            queue = st.session_state.get("reply_queue", []) or []
+            if queue:
+                st.markdown(
+                    f"""<div style="background:#fff3bf;border:1px solid #ffd43b;border-radius:14px;padding:10px 12px;margin:6px 0 10px 0;">
+                    <div style="font-weight:900;color:#000;font-size:1.05rem;">⏳ Comunicazioni in attesa <span style="opacity:.75;">({len(queue)})</span></div>
+                    <div style="color:#000;opacity:.75;font-size:.85rem;line-height:1.2;margin-top:2px;">Da gestire prima/dopo consulto. Qui puoi annotare e chiudere.</div>
+                    </div>""",
+                    unsafe_allow_html=True,
+                )
+
+                for _i, it in enumerate(queue):
+                    _id = it.get("id", f"q{_i}")
+                    caller_lbl = it.get("caller_label") or it.get("chi","")
+                    answer_lbl = it.get("answerer_label") or (("SQUADRA " + str(it.get("sq","")).strip()) if str(it.get("chi","")).strip().upper().startswith("SALA") else "SALA OPERATIVA")
+                    titolo = f"{it.get('ora','')} · {caller_lbl} → {answer_lbl}"
+
+                    with st.expander(f"➕ 🟡 {titolo}", expanded=False):
+                        st.markdown(f"**Messaggio:** {it.get('mit','')}")
+                        st.caption(f"⏳ In attesa di risposta da: {answer_lbl}")
+                        if it.get("pos"):
+                            try:
+                                st.caption(f"📍 Coordinate salvate: {it['pos'][0]:.6f}, {it['pos'][1]:.6f}")
+                            except Exception:
+                                st.caption("📍 Coordinate salvate")
+
+                        k_reply = f"reply_text_{_id}"
+                        if k_reply not in st.session_state:
+                            st.session_state[k_reply] = it.get("reply", "")
+
+                        _att = (it.get("attesa_da") or ("SQUADRA" if str(it.get("chi","")).strip().upper().startswith("SALA") else "SALA")).strip().upper()
+                        _label = f"Risposta ({answer_lbl})"
+                        _ph = ("Annota qui la risposta ricevuta dalla squadra…" if _att == "SQUADRA" else "Scrivi qui la risposta della SALA da dare al caposquadra…")
+
+                        st.text_area(_label, key=k_reply, height=80, placeholder=_ph)
+
+                        c1, c2 = st.columns([1, 1])
+                        if c1.button("✅ Segna come risposto", key=f"btn_reply_done_{_id}", use_container_width=True):
+                            # sposta su brogliaccio come nota risposta (senza cambiare stato squadra)
+                            try:
+                                it["reply"] = st.session_state.get(k_reply, "")
+                            except Exception:
+                                pass
+                            # aggiorna brogliaccio: salva la risposta SULLA STESSA comunicazione (senza cambiare stato squadra)
+                            try:
+                                _reply_txt = (it.get("reply","") or "").strip()
+                                for _ev in st.session_state.brogliaccio:
+                                    if _ev.get("id") == _id:
+                                        _ev["ris"] = _reply_txt
+                                        _ev["pending"] = False
+                                        _ev["ris_ora"] = datetime.now().strftime("%H:%M")
+                                        _ev["ris_da"] = (it.get("answerer_label") or (it.get("attesa_da") or "SALA")).upper()
+                                        break
+                            except Exception:
+                                pass
+
+# rimuovi dalla coda
+                            st.session_state.reply_queue = [x for x in st.session_state.reply_queue if x.get("id") != _id]
+                            save_data_to_disk()
+                            st.rerun()
+
+                        if c2.button("🗑️ Rimuovi dalla coda", key=f"btn_reply_rm_{_id}", use_container_width=True):
+                            st.session_state.reply_queue = [x for x in st.session_state.reply_queue if x.get("id") != _id]
+                            save_data_to_disk()
+                            st.rerun()
+
 
             if fast_img:
                 pts = []

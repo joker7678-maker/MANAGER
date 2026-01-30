@@ -1,11 +1,255 @@
+import html
 import streamlit as st
 import streamlit.components.v1 as components
 import time
+import os
+import uuid
+import socket
+import base64
+import json
+import re
+from datetime import datetime
+
+
+st.markdown(r'''
+<style>
+@keyframes blink { 0%{opacity:1;} 50%{opacity:.25;} 100%{opacity:1;} }
+.semaforo { display:flex; gap:.5rem; align-items:center; margin:.25rem 0 .7rem 0; flex-wrap:wrap; }
+.sem-pill{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  height:34px;
+  padding:0 .75rem;
+  border-radius:999px;
+  font-weight:950;
+  font-size:1.0rem;
+  letter-spacing:.6px;
+  line-height:1;
+  box-shadow:0 0 10px rgba(0,0,0,.15);
+  user-select:none;
+}
+.sem-pill .sem-count{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  margin-left:.5rem;
+  min-width:26px;
+  height:22px;
+  padding:0 .4rem;
+  border-radius:999px;
+  font-size:.85rem;
+  font-weight:950;
+  background:rgba(255,255,255,.22);
+}
+.sem-pill.red{ background:#c62828; color:#fff; }
+.sem-pill.yellow{ background:#f9a825; color:#111827; }
+.sem-pill.off{ background:#334155; color:#cbd5e1; box-shadow:none; opacity:.75; }
+.sem-pill.on{ animation: blink 1s infinite; }
+@media (max-width: 560px){
+  .sem-pill{ height:40px; font-size:1.05rem; padding:0 .9rem; }
+  .sem-pill .sem-count{ min-width:30px; height:24px; }
+}
+
+/* ==== MAIN TEAM BADGES PANEL ==== */
+.main-team-panel{
+  margin: .12rem 0 .32rem 0;
+  padding: .52rem .62rem;
+  border-radius: 16px;
+  border: 1px solid rgba(15,23,42,.12);
+  background: linear-gradient(135deg, #ffc107 0%, #ffe082 55%, #fff8e1 100%);
+  box-shadow: 0 10px 24px rgba(2,6,23,.10);
+}
+.main-team-badges{
+  display:flex;
+  gap:.4rem;
+  flex-wrap:wrap;
+  align-items:center;
+  margin-top:.22rem;
+}
+.main-team-badge{
+  display:inline-flex;
+  align-items:center;
+  gap:.35rem;
+  padding:.26rem .55rem;
+  border-radius: 999px;
+  font-weight: 850;
+  font-size: .82rem;
+  border: 1px solid rgba(15,23,42,.12);
+  box-shadow: 0 6px 18px rgba(2,6,23,.06);
+  max-width: 100%;
+}
+.main-team-badge.blink{
+  animation: mtBlink .85s ease-in-out infinite;
+  outline: 2px solid rgba(2,6,23,.18);
+  outline-offset: 1px;
+}
+@keyframes mtBlink{
+  0%{ transform: translateY(0); filter: brightness(1); }
+  50%{ transform: translateY(-1px); filter: brightness(1.35); }
+  100%{ transform: translateY(0); filter: brightness(1); }
+}
+
+.main-team-badge .tname{
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 26ch;
+}
+.main-team-legend{
+  display:flex;
+  gap:.6rem;
+  flex-wrap:wrap;
+  align-items:center;
+  margin-top:.35rem;
+  opacity:.95;
+}
+.main-team-legend .item{
+  display:inline-flex;
+  align-items:center;
+  gap:.35rem;
+  font-size:.78rem;
+  font-weight: 700;
+}
+.main-team-legend .dot{
+  width:10px;
+  height:10px;
+  border-radius: 50%;
+  border: 1px solid rgba(15,23,42,.18);
+  display:inline-block;
+}
+@media (max-width: 640px){
+  .main-team-panel{ padding:.48rem .55rem; border-radius: 14px; }
+  .main-team-badge{ font-size:.9rem; padding:.32rem .6rem; }
+  .main-team-badge .tname{ max-width: 18ch; }
+}
+
+</style>
+''', unsafe_allow_html=True)
 
 # =========================
 # TOKEN QR / LINK SQUADRA
 # =========================
 TOKEN_TTL_HOURS = 24
+
+# =========================
+# SEMAFORO MESSAGGI (SIDEBAR)
+# =========================
+def _count_inbox_outbox_pending():
+    """Conta in modo ultra-robusto.
+    INBOX: inbox_avvisi / avvisi_inbox / inbox (list/dict)
+    PENDING: prova variabili note + fallback euristico su tutte le chiavi session_state che contengono 'outbox'/'pending'.
+    """
+    # ---- INBOX ----
+    inbox = st.session_state.get(
+        "inbox_avvisi",
+        st.session_state.get("avvisi_inbox", st.session_state.get("inbox", [])),
+    )
+    if isinstance(inbox, dict):
+        inbox_count = len(inbox)
+    else:
+        inbox_count = len(list(inbox)) if inbox else 0
+
+    # ---- PENDING (chiavi note) ----
+    pending_items = []
+    for k in (
+        "outbox_pending",
+        "pending_outbox",
+        "outbox_da_inviare",
+        "outbox_queue",
+        "outbox_pendenti",
+        "queue_outbox",
+        "outbox_waiting",
+        "outbox_awaiting",
+        "outbox_non_inviati",
+        "outbox_to_send",
+        "outbox_pending_ids",
+    ):
+        v = st.session_state.get(k, None)
+        if v:
+            if isinstance(v, dict):
+                pending_items.extend(list(v.values()))
+            elif isinstance(v, (list, tuple, set)):
+                pending_items.extend(list(v))
+            else:
+                pending_items.append(v)
+
+    def _is_pending(item):
+        if not isinstance(item, dict):
+            return True
+        if item.get("sent") is True or item.get("inviato") is True:
+            return False
+        stt = (item.get("status") or item.get("stato") or item.get("state") or "").strip().lower()
+        if stt in ("sent","inviato","ok","delivered","done"):
+            return False
+        # tutto il resto lo consideriamo in attesa
+        return True
+
+    # ---- fallback euristico: se non troviamo pending nelle chiavi note ----
+    if not pending_items:
+        best = 0
+        # scandisci tutte le chiavi che somigliano a "outbox/pending"
+        for key in list(st.session_state.keys()):
+            k = key.lower()
+            if ("outbox" in k) or ("pending" in k) or ("queue" in k) or ("attesa" in k) or ("da_inviare" in k):
+                v = st.session_state.get(key)
+                n = 0
+                if isinstance(v, dict):
+                    # conta solo quelli non inviati
+                    n = sum(1 for x in v.values() if _is_pending(x))
+                elif isinstance(v, (list, tuple, set)):
+                    n = sum(1 for x in v if _is_pending(x))
+                else:
+                    n = 1 if v else 0
+                if n > best:
+                    best = n
+        outbox_count = best
+    else:
+        outbox_count = sum(1 for x in pending_items if _is_pending(x))
+
+    return inbox_count, outbox_count
+
+# =========================
+# SEMAFORO DEBUG (opzionale)
+# =========================
+def render_semaforo_debug():
+    with st.expander("🛠️ Debug Semaforo", expanded=False):
+        inbox_count, outbox_count = _count_inbox_outbox_pending()
+        st.write({"inbox_count": inbox_count, "outbox_count": outbox_count})
+        keys = [k for k in st.session_state.keys() if any(t in k.lower() for t in ("outbox","pending","queue","attesa","da_inviare"))]
+        st.write("chiavi rilevanti:", keys)
+        for k in keys[:20]:
+            v = st.session_state.get(k)
+            try:
+                if isinstance(v, dict):
+                    st.write(k, "dict", "len:", len(v))
+                elif isinstance(v, (list, tuple, set)):
+                    st.write(k, type(v).__name__, "len:", len(v))
+                else:
+                    st.write(k, type(v).__name__, "val:", str(v)[:80])
+            except Exception as e:
+                st.write(k, "err:", str(e))
+
+def render_semaforo_sidebar():
+    inbox_count, outbox_count = _count_inbox_outbox_pending()
+
+    red_cls = "red on" if inbox_count > 0 else "off"
+    yel_cls = "yellow on" if outbox_count > 0 else "off"
+
+    st.markdown(
+        f"""
+<div style='color:#f1f5f9;font-weight:800;margin:.15rem 0 .35rem 0'>🚦 MESSAGGI</div>
+<div class='semaforo'>
+  <div class='sem-pill {red_cls}' title='Arrivo (INBOX)'>
+    ARRIVO <span class='sem-count'>{inbox_count}</span>
+  </div>
+  <div class='sem-pill {yel_cls}' title='Attesa (OUTBOX)'>
+    ATTESA <span class='sem-count'>{outbox_count}</span>
+  </div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
 
 def _safe_float(val, default=0.0):
     """Convert val to float safely (handles '', None, commas)."""
@@ -22,16 +266,11 @@ def _safe_float(val, default=0.0):
     except Exception:
         return float(default)
 
-
-
-
 def render_clock_in_sidebar(show_stopwatch: bool = True):
     """
     Orologio ultra-compatto in sidebar, aggiornamento ogni secondo via JS, tempo in UTC.
     Evita tagli: iframe height conservativo + layout elastico (no height fissa).
     """
-    import streamlit as st
-    import streamlit.components.v1 as components
 
     clock_html = f"""
 <!DOCTYPE html>
@@ -144,10 +383,8 @@ from typing import Optional, Tuple, Dict, Any, List
 import hashlib
 import io
 
-
 # =========================
 # REPORT CACHE (GLOBAL, SAFE)
-# =========================
 # =========================
 # SQUADRE: COLORI E ICONE
 # =========================
@@ -177,7 +414,6 @@ def _cached_report_bytes(payload_json: str, meta_json: str) -> bytes:
         meta=meta,
     )
 
-
 def team_style(team: str) -> dict:
     """Ritorna icona+colore stabile per squadra (in base all'ordine alfabetico)."""
     try:
@@ -202,11 +438,8 @@ def _merge_template_text(user_text: str) -> str:
         return tpl
     return user_text
 
-
-
 def _b64_encode_bytes(b: bytes) -> str:
     return base64.b64encode(b).decode("ascii")
-
 
 # =========================
 # CLOCK (SIDEBAR) – digitale + cronometro (JS, compatto)
@@ -233,7 +466,7 @@ def render_clock_in_sidebar(show_stopwatch: bool = True) -> None:
       }}
 
       /* sidebar: non tagliare l'iframe del clock */
-      section[data-testid="stSidebar"], 
+      section[data-testid="stSidebar"],
       section[data-testid="stSidebar"] > div {{
         overflow: visible !important;
       }}
@@ -418,11 +651,8 @@ def render_clock_in_sidebar(show_stopwatch: bool = True) -> None:
     """
     components.html(html, height=height, scrolling=False)
 
-
 def _b64_decode_bytes(s: str) -> bytes:
     return base64.b64decode(s.encode("ascii"))
-
-
 
 def _normalize_photo_obj(photo):
     """Ensure JSON-serializable photo object. Accepts None/bytes/dict."""
@@ -447,11 +677,59 @@ def _photo_to_bytes(photo) -> Optional[bytes]:
             return None
     return None
 
-
 # =========================
 # CONFIG
 # =========================
 st.set_page_config(page_title="RADIO MANAGER - PROTEZIONE CIVILE THIENE", layout="wide")
+
+st.markdown(r'''
+<style>
+/* KILL TOP SPACE COMPLETAMENTE */
+html, body { margin:0 !important; padding:0 !important; }
+
+/* hide chrome that reserves space */
+div[data-testid="stHeader"], div[data-testid="stToolbar"], div[data-testid="stDecoration"] { display:none !important; height:0 !important; }
+header { display:none !important; }
+
+/* kill any reserved top space */
+div[data-testid="stAppViewContainer"] { padding-top:0 !important; margin-top:0 !important; }
+div[data-testid="stAppViewContainer"] > .main { padding-top:0 !important; margin-top:0 !important; }
+div[data-testid="stAppViewContainer"] > .main .block-container { padding-top:0 !important; margin-top:0 !important; }
+.block-container { padding-top:0 !important; margin-top:0 !important; }
+section.main > div { padding-top:0 !important; margin-top:0 !important; }
+div[data-testid="stAppViewContainer"] > .main > div:first-child { padding-top:0 !important; margin-top:0 !important; }
+
+/* first title: zero spacing */
+h1, h1:first-of-type { margin-top:0 !important; padding-top:0 !important; }
+</style>
+''', unsafe_allow_html=True)
+
+st.markdown(r'''
+<style>
+/* EXTRA TOP KILL */
+div[data-testid="stAppViewContainer"] .main > div:first-child { margin-top:0 !important; padding-top:0 !important; }
+</style>
+''', unsafe_allow_html=True)
+
+st.markdown(r'''
+<style>
+.block-container { padding-top:0rem !important; margin-top:0rem !important; }
+section.main > div { padding-top:0rem !important; margin-top:0rem !important; }
+
+</style>
+''', unsafe_allow_html=True)
+
+# =========================
+# STABILITA' AVVIO (anti schermata bianca)
+# - timeout rete breve (evita blocchi su IP pubblico / request)
+# - banner avvio (capisci subito che l'app è partita)
+# =========================
+try:
+    import socket as _socket
+    _socket.setdefaulttimeout(4)
+except Exception:
+    pass
+
 # =========================
 # UI THEME – CONSISTENZA & COMPATTEZZA (v77)
 # =========================
@@ -463,7 +741,7 @@ st.markdown(
     --pc-navy-2:#0b2138;
     --pc-blue:#1e88e5;
     --pc-bg:#f6f8fb;
-    --pc-card:#ffffff;
+    --:#ffffff;
     --pc-border: rgba(15,23,42,.14);
     --pc-text:#0f172a;
     --pc-muted: rgba(15,23,42,.72);
@@ -477,16 +755,10 @@ st.markdown(
   }
 
   /* Card uniformi */
-  .pc-card{
-    background: var(--pc-card) !important;
+  .{
+    background: var(--) !important;
     border: 1px solid var(--pc-border) !important;
     border-radius: var(--pc-radius) !important;
-  }
-
-  /* Card OPERATORE RADIO (colore diverso) */
-  .pc-card-radio{
-    background: rgba(30,136,229,.08) !important;
-    border: 1px solid rgba(30,136,229,.28) !important;
   }
 
   /* Sidebar più compatta e leggibile */
@@ -494,7 +766,7 @@ st.markdown(
     background: var(--pc-navy) !important;
   }
   section[data-testid="stSidebar"] .block-container{
-    padding-top: .7rem !important;
+    padding-top: 0rem !important;
     padding-bottom: .7rem !important;
   }
   section[data-testid="stSidebar"] .stMarkdown{
@@ -522,23 +794,12 @@ st.markdown(
 
   /* Riduci gli spazi verticali dei container Streamlit */
   div[data-testid="stVerticalBlock"] > div{
-    gap: .55rem !important;
+    gap: .2 rem !important;
   }
 </style>
     """,
     unsafe_allow_html=True,
 )
-
-
-
-
-
-
-
-
-
-
-
 
 # =========================
 # QR MODE + SICUREZZA RUOLI
@@ -562,9 +823,6 @@ LOCK_CAPO = _q_mode in {"capo", "caposquadra", "capo_squadra", "caposq", "c"}
 LOCK_CAMPO = _q_mode in {"campo", "field", "modulo_campo", "modulo-campo", "camp"}
 LOCK_FIELD = LOCK_CAPO or LOCK_CAMPO
 
-
-
-
 if LOCK_FIELD:
     st.markdown("""
     <style>
@@ -582,104 +840,22 @@ if LOCK_FIELD:
       header { min-height: 0 !important; }
 
       /* Padding pagina mobile più stretto */
-      .block-container { padding-top: .6rem !important; padding-left: .75rem !important; padding-right: .75rem !important; }
+      .block-container { padding-top: 0rem !important; padding-left: .75rem !important; padding-right: .75rem !important; }
     </style>
     """, unsafe_allow_html=True)
 
-
-
-
 # =========================
-# TOP SPACING – TITOLO A FILO (v81)
-# =========================
-st.markdown(
-    """
-<style>
-  /* Togli aria sopra la pagina (più aggressivo) */
-  [data-testid="stAppViewContainer"]{
-    padding-top: 0 !important;
-  }
-  [data-testid="stAppViewContainer"] .main{
-    padding-top: 0 !important;
-    margin-top: 0 !important;
-  }
-
-  /* Header Streamlit: elimina spazio residuo */
-  header[data-testid="stHeader"],
-  [data-testid="stHeader"]{
-    display: none !important;
-    height: 0 !important;
-    min-height: 0 !important;
-    margin: 0 !important;
-    padding: 0 !important;
-  }
-
-  /* Container principale: a filo */
-  [data-testid="stAppViewContainer"] .main .block-container,
-  .main .block-container,
-  section.main .block-container{
-    padding-top: 0rem !important;
-    margin-top: 0rem !important;
-  }
-
-  /* Titoli: niente margine sopra */
-  .stMarkdown h1, .stMarkdown h2, .stMarkdown h3,
-  div[data-testid="stMarkdownContainer"] h1,
-  div[data-testid="stMarkdownContainer"] h2,
-  div[data-testid="stMarkdownContainer"] h3{
-    margin-top: 0 !important;
-    padding-top: 0 !important;
-  }
-
-  /* Primo blocco del main: “tira su” ancora un filo */
-  [data-testid="stAppViewContainer"] .main .block-container > div:first-child{
-    margin-top: -0.65rem !important;
-  }
-</style>
-""",
-    unsafe_allow_html=True,
-)
-
-# =========================
-# FIX TITOLI MODULO CAMPO (mobile)
+# TOP OVERRIDE – TITOLO A FILO (definitivo)
 # =========================
 st.markdown("""
 <style>
-/* Titolo: compatto e non tagliato */
-.campo-title,
-.modulo-campo-title,
-div[data-testid="stMarkdownContainer"] h1,
-div[data-testid="stMarkdownContainer"] h2,
-div[data-testid="stMarkdownContainer"] h3 {
-  line-height: 1.22 !important;
-}
-
-/* Riduci spazio tra bordo superiore e titolo */
-.main .block-container {
-  padding-top: 0.45rem !important;
-}
-
-div[data-testid="stMarkdownContainer"] h1 {
-  margin-top: 0.15rem !important;
-  padding-top: 0 !important;
-}
-
-@media (max-width: 768px) {
-  .main .block-container {
-    padding-top: 0.28rem !important;
-  }
-  div[data-testid="stMarkdownContainer"] h1 {
-    margin-top: 0.10rem !important;
-  }
-}
+div[data-testid="stAppViewContainer"] > .main {padding-top:0 !important; margin-top:0 !important;}
+div[data-testid="stAppViewContainer"] > .main .block-container {padding-top:0 !important; margin-top:0 !important;}
+h1, h1:first-of-type {margin-top:0 !important; padding-top:0 !important;}
 </style>
 """, unsafe_allow_html=True)
 
-
-
-
 st.session_state["AUTH_SALA_OK"] = True  # nessun secondo PIN: Sala sempre disponibile dopo accesso iniziale
-
 
 def _sync_ruolo_from_sel():
     st.session_state["ruolo_ui"] = st.session_state.get("ruolo_sel", "MODULO CAPOSQUADRA")
@@ -690,7 +866,6 @@ def ensure_sala_auth():
     """
     st.session_state["AUTH_SALA_OK"] = True
     return True
-
 
 # =========================
 # GLOBAL CSS (readability fixes)
@@ -750,7 +925,6 @@ def _local_ip() -> str:
         return ip
     except Exception:
         return "127.0.0.1"
-
 
 def _guess_public_url() -> str:
     """
@@ -847,8 +1021,6 @@ def compute_net_state(force_offline: bool, port: int) -> dict:
         "source": source,
     }
 
-
-
 DATA_PATH = "data.json"
 APP_PORT = 8501
 LOGO_PATH = "logo.png"
@@ -911,7 +1083,6 @@ def team_hex(team: str) -> str:
     hx = (info.get("mhex") or "").strip()
     return hx if (hx.startswith("#") and len(hx) == 7) else "#1e88e5"
 
-
 # =========================
 # NATO – Spelling radio
 # =========================
@@ -935,8 +1106,6 @@ except Exception:
     qp_mode, qp_team, qp_token = "", "", ""
 
 # Auto-refresh della pagina (solo Sala Operativa, non lato campo)
-
-
 
 # =========================
 # UTILS
@@ -965,6 +1134,106 @@ def text_color_for_bg(hex_color: str) -> str:
     b = int(h[4:6], 16)
     lum = (0.299 * r + 0.587 * g + 0.114 * b)
     return "#0b1220" if lum > 160 else "#ffffff"
+
+
+def render_main_team_badges_panel():
+    """Badge squadre sotto al titolo principale (MAIN), con colori basati sullo stato di servizio.
+    Si aggiorna automaticamente: aggiungi/elimina squadra -> compare/scompare.
+    """
+    try:
+        squads = st.session_state.get("squadre", {}) or {}
+    except Exception:
+        squads = {}
+
+    if not squads:
+        return
+
+    # --- Blink gestione cambio stato (10s) ---
+    now_ts = time.time()
+    prev_states = st.session_state.get("_prev_team_states", {}) or {}
+    changed_at = st.session_state.get("_team_state_changed_at", {}) or {}
+
+    current_states = {}
+    for _t in squads.keys():
+        _info = get_squadra_info(_t)
+        current_states[_t] = (_info.get("stato") or "").strip()
+
+    # squadra aggiunta/eliminata -> aggiorna dizionari
+    for _t, _st in current_states.items():
+        if prev_states.get(_t) != _st and _t in prev_states:
+            changed_at[_t] = now_ts
+    for _t in list(changed_at.keys()):
+        if _t not in current_states:
+            changed_at.pop(_t, None)
+
+    st.session_state["_prev_team_states"] = current_states
+    st.session_state["_team_state_changed_at"] = changed_at
+
+    badge_html_parts = []
+
+    def _stato_priority(_st: str) -> int:
+        _s = (_st or "").strip().lower()
+        # Priorità: più "caldo" prima
+        priority_order = [
+            "intervento in corso",
+            "arrivata sul luogo di intervento",
+            "in uscita dal coc",
+            "rientro in corso",
+            "in attesa al coc",
+            "rientrata al coc",
+            "intervento concluso",
+        ]
+        for i, lab in enumerate(priority_order):
+            if _s == lab:
+                return i
+        return 999
+
+    teams_sorted = sorted(
+        list(squads.keys()),
+        key=lambda t: (_stato_priority(get_squadra_info(t).get("stato")), str(t).lower())
+    )
+
+    for team_name in teams_sorted:
+        info = get_squadra_info(team_name)
+        stato = (info.get("stato") or "").strip()
+
+        # Colore stato (stessi valori di COLORI_STATI)
+        hex_bg = None
+        if stato:
+            for label, meta in COLORI_STATI.items():
+                if label.lower() == stato.lower():
+                    hex_bg = meta.get("hex")
+                    break
+        if not hex_bg:
+            hex_bg = "#e2e8f0"  # fallback neutro
+
+        fg = text_color_for_bg(hex_bg)
+
+        blink_cls = " blink" if (now_ts - (st.session_state.get("_team_state_changed_at", {}).get(team_name, 0) or 0) < 10) else ""
+
+        badge_html_parts.append(
+            f"""<span class='main-team-badge{blink_cls}' style='background:{hex_bg}; color:{fg};' title='{html.escape(("Caposquadra: " + ((info.get("capo") or "").strip() or "—") + " | Tel: " + ((info.get("tel") or "").strip() or "—")), quote=True)}'>
+                    <span class='tname'>{team_name}</span>
+                 </span>"""
+        )
+
+    # Mini-leggenda (pallino + scritta)
+    legend_items = []
+    for label, meta in COLORI_STATI.items():
+        legend_items.append(
+            f"""<span class='item'><span class='dot' style='background:{meta.get('hex','#94a3b8')};'></span>{label}</span>"""
+        )
+
+    st.markdown(
+        f"""
+<div class="main-team-panel">
+  <div class="main-team-badges">{''.join(badge_html_parts)}</div>
+  <div class="main-team-legend">{''.join(legend_items)}</div>
+</div>
+""",
+        unsafe_allow_html=True
+    )
+
 
 def chip_stato(stato: str) -> str:
     bg = COLORI_STATI.get(stato, {}).get("hex", "#e2e8f0")
@@ -1025,7 +1294,6 @@ def chip_call_flow(row: dict) -> str:
     a, b = call_flow_from_row(row)
     return f"<div class='pc-flow'>📞 <b>{a}</b> <span class='pc-arrow'>➜</span> 🎧 <b>{b}</b></div>"
 
-
 def _folium_tiles_spec(choice: str | None = None) -> dict:
     """Restituisce specifiche tiles per Folium.
 
@@ -1063,11 +1331,9 @@ def _folium_tiles_spec(choice: str | None = None) -> dict:
         "attr": "",
     }
 
-
 def _folium_base_choice() -> str:
     """Scelta base map per la mappa principale (app)."""
     return st.session_state.get("map_base_main", "Topografica")
-
 
 def _folium_apply_base_layer(m: folium.Map, choice: str | None = None) -> folium.Map:
     """Applica il layer base selezionato alla mappa Folium (tiles + attr)."""
@@ -1080,7 +1346,6 @@ def _folium_apply_base_layer(m: folium.Map, choice: str | None = None) -> folium
     folium.TileLayer(tiles=tiles, attr=attr, name=name, control=False).add_to(m)
     return m
 
-
 def build_folium_map_from_df(df: pd.DataFrame, center: list, zoom: int = 13, inbox: Optional[List[dict]] = None) -> folium.Map:
     m = folium.Map(location=center, zoom_start=zoom, tiles=None, prefer_canvas=True)
     _folium_apply_base_layer(m)
@@ -1092,7 +1357,6 @@ def build_folium_map_from_df(df: pd.DataFrame, center: list, zoom: int = 13, inb
             stt = (row.get("st") or "").strip()
             if isinstance(pos, list) and len(pos) == 2 and sq:
                 ultime_pos[sq] = {"pos": pos, "st": stt}
-
 
     # Aggiunge anche le POSIZIONI PENDING (inbox) per visualizzarle subito in mappa
     if inbox:
@@ -1120,7 +1384,6 @@ def build_folium_map_from_df(df: pd.DataFrame, center: list, zoom: int = 13, inb
             tooltip=f"{sq}: {stt}" if stt else sq,
         ).add_to(m)
     return m
-
 
 def build_folium_map_from_events(events: List[dict], center: list, zoom: int = 13, inbox: Optional[List[dict]] = None) -> folium.Map:
     """Mappa più veloce: usa direttamente la lista eventi (brogliaccio) senza pandas.
@@ -1175,7 +1438,6 @@ def build_folium_map_from_events(events: List[dict], center: list, zoom: int = 1
         ).add_to(m)
 
     return m
-
 
 def build_folium_map_from_latest_positions(
     ultime_pos: Dict[str, Dict[str, Any]],
@@ -1240,7 +1502,6 @@ def df_for_report(df: pd.DataFrame) -> pd.DataFrame:
     )
     return out
 
-
 # =========================
 # PERFORMANCE – CACHE
 # =========================
@@ -1251,7 +1512,6 @@ def _hash_obj(o: Any) -> str:
     except Exception:
         s = str(o)
     return hashlib.md5(s.encode("utf-8")).hexdigest()
-
 
 @st.cache_data(show_spinner=False, ttl=60)
 def _latest_positions_cached(events_slice: List[dict], inbox: List[dict], squad_names: List[str]) -> Dict[str, Dict[str, Any]]:
@@ -1287,7 +1547,6 @@ def _latest_positions_cached(events_slice: List[dict], inbox: List[dict], squad_
                 continue
 
     return ultime_pos
-
 
 @st.cache_data(show_spinner=False, ttl=60)
 def _build_folium_from_latest_cached(latest: Dict[str, Dict[str, Any]], center: List[float], zoom: int) -> folium.Map:
@@ -1423,7 +1682,6 @@ def render_static_map_png(
     except Exception:
         return None
 
-
 @st.cache_data(show_spinner=False, ttl=30)
 def _static_map_png_cached(cache_key: str, points: List[Tuple[float, float, str]], zoom: int) -> Optional[bytes]:
     """PNG statico con cache breve.
@@ -1499,7 +1757,6 @@ def make_html_report_bytes(
         dfv = dfv[keep].rename(columns=col_labels)
 
         return dfv.to_html(index=False, classes="tbl", escape=True)
-
 
     # ---- meta
     ev_data = _safe(str(meta.get("ev_data", "")))
@@ -1685,10 +1942,10 @@ def make_html_report_bytes(
         map_html = ""
         if include_map:
             map_html = f"""
-          <div class=\"mapwrap\">
-            <iframe class=\"mapframe\" data-map=\"LATEST\" srcdoc=\"{_html.escape(maps_sq['LATEST'], quote=True)}\"></iframe>
-            <iframe class=\"mapframe\" data-map=\"ALL\" srcdoc=\"{_html.escape(maps_sq['ALL'], quote=True)}\" style=\"display:none\"></iframe>
-            <iframe class=\"mapframe\" data-map=\"TRACK\" srcdoc=\"{_html.escape(maps_sq['TRACK'], quote=True)}\" style=\"display:none\"></iframe>
+          <div class="mapwrap">
+            <iframe class="mapframe" data-map="LATEST" srcdoc="{_html.escape(maps_sq['LATEST'], quote=True)}"></iframe>
+            <iframe class="mapframe" data-map="ALL" srcdoc="{_html.escape(maps_sq['ALL'], quote=True)}" style="display:none"></iframe>
+            <iframe class="mapframe" data-map="TRACK" srcdoc="{_html.escape(maps_sq['TRACK'], quote=True)}" style="display:none"></iframe>
           </div>
             """
 
@@ -1706,10 +1963,10 @@ def make_html_report_bytes(
     map_html_tot = ""
     if include_map:
         map_html_tot = f"""
-      <div class=\"mapwrap\">
-        <iframe class=\"mapframe\" data-map=\"LATEST\" srcdoc=\"{_html.escape(maps_tot['LATEST'], quote=True)}\"></iframe>
-        <iframe class=\"mapframe\" data-map=\"ALL\" srcdoc=\"{_html.escape(maps_tot['ALL'], quote=True)}\" style=\"display:none\"></iframe>
-        <iframe class=\"mapframe\" data-map=\"TRACK\" srcdoc=\"{_html.escape(maps_tot['TRACK'], quote=True)}\" style=\"display:none\"></iframe>
+      <div class="mapwrap">
+        <iframe class="mapframe" data-map="LATEST" srcdoc="{_html.escape(maps_tot['LATEST'], quote=True)}"></iframe>
+        <iframe class="mapframe" data-map="ALL" srcdoc="{_html.escape(maps_tot['ALL'], quote=True)}" style="display:none"></iframe>
+        <iframe class="mapframe" data-map="TRACK" srcdoc="{_html.escape(maps_tot['TRACK'], quote=True)}" style="display:none"></iframe>
       </div>
         """
 
@@ -1971,7 +2228,7 @@ def default_state_payload():
     return {
         "brogliaccio": [],
         "inbox": [],
-        "squadre": {"SQUADRA 1": {"stato": "In attesa al COC", "capo": "", "tel": "", "token": uuid.uuid4().hex}},
+        "squadre": {"SQUADRA 1": {"stato": "In attesa al COC", "capo": "", "tel": "", "token": uuid.uuid4().hex, "tetra_id": ""}},
         "pos_mappa": [45.7075, 11.4772],
         "op_name": "",
         "ev_data": datetime.now().date().isoformat(),
@@ -1981,7 +2238,6 @@ def default_state_payload():
         "BASE_URL": "",
         "cnt_conclusi": 0,
     }
-
 
 # =========================
 # OUTBOX (invii in attesa di salvataggio su disco)
@@ -2027,7 +2283,6 @@ def _outbox_retry_save() -> bool:
         return bool(ok)
     except Exception:
         return False
-
 
 def _photo_sig(photo_obj: dict) -> dict:
     """Firma leggera foto: evita confronto base64 completo."""
@@ -2116,7 +2371,6 @@ def load_data_from_disk():
     ensure_inbox_ids()
     return True
 
-
 # =========================
 # AUTO-REFRESH smart (solo nuovi eventi + pausa durante scrittura)
 # =========================
@@ -2176,8 +2430,6 @@ def load_data_from_uploaded_json(file_bytes: bytes):
     save_data_to_disk()
     ensure_inbox_ids()
 
-
-
 def ensure_inbox_ids() -> None:
     """Assicura che ogni messaggio in inbox abbia un id stabile (evita bug widget/rerun)."""
     inbox = st.session_state.get("inbox", [])
@@ -2226,7 +2478,6 @@ for _, info in st.session_state.squadre.items():
     if "token" not in info or not info["token"]:
         info["token"] = uuid.uuid4().hex
 
-
 # =========================
 # SYNC MULTI-SESSION (Caposquadra -> Console)
 # =========================
@@ -2253,8 +2504,6 @@ try:
             st.session_state.BASE_URL = origin
 except Exception:
     pass
-
-
 
 # =========================
 # GEOLOCATION (CAPOSQUADRA)
@@ -2301,11 +2550,12 @@ def get_phone_gps_once() -> Optional[List[float]]:
 # =========================
 # TEAM OPS
 # =========================
-def update_team(old_name: str, new_name: str, capo: str, tel: str) -> Tuple[bool, str]:
+def update_team(old_name: str, new_name: str, capo: str, tel: str, tetra_id: str = "") -> Tuple[bool, str]:
     old_name = (old_name or "").strip().upper()
     new_name = (new_name or "").strip().upper()
     capo = (capo or "").strip()
     tel = (tel or "").strip()
+    tetra_id = (tetra_id or "").strip()
 
     if not old_name or old_name not in st.session_state.squadre:
         return False, "Seleziona una squadra valida."
@@ -2334,6 +2584,7 @@ def update_team(old_name: str, new_name: str, capo: str, tel: str) -> Tuple[bool
 
     st.session_state.squadre[new_name]["capo"] = capo
     st.session_state.squadre[new_name]["tel"] = tel
+    st.session_state.squadre[new_name]["tetra_id"] = tetra_id
     if "token" not in st.session_state.squadre[new_name] or not st.session_state.squadre[new_name]["token"]:
         st.session_state.squadre[new_name]["token"] = uuid.uuid4().hex
 
@@ -2456,7 +2707,6 @@ require_login()
 if (not st.session_state.get("auth_ok")) and (not st.session_state.get("field_ok")):
     st.stop()
 
-
 # =========================
 # AUTO-REFRESH (solo Sala Operativa DOPO login)
 # =========================
@@ -2486,8 +2736,6 @@ if st.session_state.get("auth_ok") and (not st.session_state.get("field_ok")) an
             # Nessun auto refresh disponibile: usa il pulsante "Aggiorna" o disattiva Auto aggiorna.
             pass
 
-
-
 # =========================
 # CSS (UI)
 # =========================
@@ -2495,14 +2743,14 @@ st.markdown("""
 <style>
 header[data-testid="stHeader"] { background: transparent; border:none; }
 .stApp { background: linear-gradient(180deg,#e9eef3 0%, #dfe7ee 100%); color:#0b1220; }
-.block-container { padding-top: 1.2rem; padding-bottom: 2rem; }
+.block-container { padding-top: 0rem; padding-bottom: 2rem; }
 
-.pc-hero{
+.pc-hero{ margin-bottom:.18rem; 
   background: radial-gradient(1200px 300px at 50% 0%, rgba(255,255,255,.18), rgba(255,255,255,0)),
               linear-gradient(135deg, #0d47a1 0%, #0b1f3a 80%);
   color:white; border: 1px solid rgba(255,255,255,.18);
   border-radius: 18px; padding: 18px 22px;
-  margin-top: -60px; margin-bottom: 18px;
+  margin-top: -210px; margin-bottom: 0px;
   box-shadow: 0 10px 30px rgba(2,6,23,.12);
   display:flex; align-items:center; justify-content:space-between; gap:16px;
 }
@@ -2513,10 +2761,11 @@ header[data-testid="stHeader"] { background: transparent; border:none; }
   border: 1px solid rgba(255,255,255,.22); padding: 6px; object-fit: contain; }
 .pc-badge{ background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.22);
   padding: 10px 14px; border-radius: 999px; font-weight: 800; white-space: nowrap; }
-.pc-card{ background: #fff; border: 1px solid rgba(15,23,42,.15);
+.{ background: #fff; border: 1px solid rgba(15,23,42,.15);
   border-radius: 16px; padding: 18px; box-shadow: 0 8px 22px rgba(2,6,23,.08); margin-bottom: 14px; }
-.pc-chip{ display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border-radius:999px;
-  font-weight:900; font-size:.85rem; border:1px solid rgba(15,23,42,.12); line-height:1; }
+.pc-chip{ display:inline-flex; align-items:center; gap:8px; padding:8px 12px; border-radius:999px;
+  font-weight:900; font-size:.9rem; border:1px solid rgba(15,23,42,.12);
+  line-height:1.15; margin:10px 0 10px 0; max-width:100%; flex-wrap:wrap; }
 .pc-dot{ width:10px; height:10px; border-radius:999px; background: rgba(255,255,255,.85); border:1px solid rgba(15,23,42,.15); }
 .pc-flow{
   background: linear-gradient(90deg, #fff7cc 0%, #dbeafe 100%);
@@ -2533,6 +2782,24 @@ header[data-testid="stHeader"] { background: transparent; border:none; }
 .pc-metric-color{ border-radius: 16px; padding: 14px; border: 1px solid rgba(15,23,42,.12); box-shadow: 0 8px 22px rgba(2,6,23,.10); }
 .pc-metric-color .k{ font-size:.85rem; font-weight: 900; text-transform: uppercase; letter-spacing: .8px; opacity: .95; }
 .pc-metric-color .v{ font-size: 2.1rem; font-weight: 950; margin-top: 2px; }
+
+.pc-metric-stack{ position: relative; }
+.pc-metric-reset-inside{
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 5;
+}
+.pc-metric-reset-inside div[data-testid="stButton"]{ margin:0 !important; }
+.pc-metric-reset-inside button{
+  padding: .15rem .45rem !important;
+  font-size: .90rem !important;
+  line-height: 1 !important;
+  border-radius: 12px !important;
+  border: 1px solid rgba(15,23,42,.18) !important;
+  box-shadow: 0 6px 14px rgba(2,6,23,.10) !important;
+}
+
 .pc-alert{ background: linear-gradient(135deg, #ff4d4d 0%, #ff7a59 100%);
   color:white; padding: 14px 16px; border-radius: 14px; font-weight: 900; text-align:center;
   box-shadow: 0 12px 28px rgba(255,77,77,.22); border: 1px solid rgba(255,255,255,.22); margin-bottom: 10px; }
@@ -2540,6 +2807,25 @@ header[data-testid="stHeader"] { background: transparent; border:none; }
 section[data-testid="stSidebar"]{
   background: linear-gradient(180deg, #123356 0%, #0b2542 100%) !important;
   border-right: 1px solid rgba(255,255,255,.10) !important;
+}
+/* 1. Riduce il margine inferiore del titolo blu */
+.pc-hero {
+    margin-bottom: 0.1rem !important;
+}
+
+/* 2. Rimuove lo spazio vuoto che Streamlit mette sopra le colonne (le colonne KPI) */
+div[data-testid="stHorizontalBlock"] {
+    margin-top: -1.0rem !important;
+}
+
+/* 3. Riduce lo spazio interno dei singoli quadrati colorati per renderli più bassi */
+.pc-metric-color {
+    padding: 10px 14px !important;
+}
+
+/* 4. Riduce lo spazio tra le righe di elementi della pagina */
+div[data-testid="stVerticalBlock"] > div {
+    gap: 0.3rem !important;
 }
 section[data-testid="stSidebar"] h1,
 section[data-testid="stSidebar"] h2,
@@ -2553,7 +2839,7 @@ section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p{
   color: rgba(248,250,252,.95) !important;
   font-weight: 800 !important;
 }
-section[data-testid="stSidebar"] hr{ border-color: rgba(255,255,255,.14) !important; }
+section[data-testid="stSidebar"]
 section[data-testid="stSidebar"] input,
 section[data-testid="stSidebar"] textarea{
   background: #ffffff !important;
@@ -2648,7 +2934,6 @@ section[data-testid="stSidebar"] .stDownloadButton > button{
 .nato-word{font-size:.70rem;font-weight:850;color:#334155;}
 @media print{.nato-title,.nato-mini,.nato-spell{display:none!important;}}
 
-
 /* Expander: sostituisce la freccia con + / - e nasconde la freccia originale (anche se cambia DOM) */
 div[data-testid="stExpander"] [data-testid="stExpanderToggleIcon"],
 div[data-testid="stExpander"] summary svg,
@@ -2717,7 +3002,6 @@ section[data-testid="stSidebar"] div[data-testid="stExpander"] button[kind="seco
   line-height: 1 !important;
 }
 
-
 /* ====== MOBILE: Modulo da campo leggibile anche in dark mode ====== */
 @media (max-width: 768px){
 
@@ -2730,7 +3014,7 @@ section[data-testid="stSidebar"] div[data-testid="stExpander"] button[kind="seco
   }
 
   /* card e contenitori */
-  .pc-card{
+  .{
     background: #ffffff !important;
     border: 1px solid rgba(15,23,42,.14) !important;
   }
@@ -2775,7 +3059,7 @@ section[data-testid="stSidebar"] div[data-testid="stExpander"] button[kind="seco
   }
 
   /* Barra "sticky" solo nel modulo da campo: il bottone invio resta sempre a portata */
-  .pc-card div[data-testid="stFormSubmitButton"]{
+  . div[data-testid="stFormSubmitButton"]{
     position: sticky !important;
     bottom: 10px !important;
     z-index: 50 !important;
@@ -2799,7 +3083,7 @@ section[data-testid="stSidebar"] div[data-testid="stExpander"] button[kind="seco
   }
 
   /* Nel modulo da campo: bottone invio ancora più evidente (verde) */
-  .pc-card button[kind="primary"], .pc-card .stButton>button[kind="primary"]{
+  . button[kind="primary"], . .stButton>button[kind="primary"]{
     background: linear-gradient(135deg, #2e7d32 0%, #1b5e20 100%) !important;
     box-shadow: 0 12px 26px rgba(27,94,32,.22) !important;
   }
@@ -2826,20 +3110,63 @@ st.markdown("""
 /* === CENTRO DI CONTROLLO (TOP) === */
 .ctrl-card{
   width:100%;
-  background:#ffe9a8;
-  border:1px solid rgba(0,0,0,.12);
-  border-radius:12px;
-  padding:10px 10px 10px 10px;
-  margin-bottom:6px;
-  box-sizing:border-box;
+  background: linear-gradient(135deg, #fff2b8 0%, #ffd86a 55%, #ffc53d 100%);
+  border: 1px solid rgba(15, 23, 42, 0.18);
+  border-radius: 16px;
+  padding: 8px 12px 10px 12px;
+  margin-top: -4px;
+  margin-bottom: 10px;
+  box-sizing: border-box;
+  box-shadow: 0 6px 18px rgba(0,0,0,.12);
 }
-.ctrl-title{
+.ctrl-kicker{
   text-align:center;
   font-size:0.78rem;
   font-weight:950;
-  letter-spacing:.7px;
+  letter-spacing:1.0px;
   text-transform:uppercase;
   color:#0f172a;
+  opacity:.95;
+}
+.ctrl-main{
+  text-align:center;
+  font-size:1.20rem;
+  font-weight:950;
+  color:#0b1220;
+  margin-top:2px;
+  line-height:1.05;
+}
+.ctrl-sub{
+  text-align:center;
+  font-size:0.85rem;
+  font-weight:700;
+  color: rgba(15, 23, 42, .85);
+  margin-top:2px;
+}
+.ctrl-row{
+  margin-top:8px;
+  display:flex;
+  gap:8px;
+  justify-content:center;
+  flex-wrap:wrap;
+}
+.ctrl-chip{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  padding:5px 10px;
+  border-radius:999px;
+  background: rgba(255,255,255,.55);
+  border:1px solid rgba(15, 23, 42, .12);
+  font-size:0.80rem;
+  font-weight:900;
+  color:#0b1220;
+  line-height:1;
+}
+@media (max-width: 768px){
+  .ctrl-card{ padding: 14px 12px 12px 12px; }
+  .ctrl-main{ font-size: 1.28rem; }
+  .ctrl-chip{ padding: 7px 12px; font-size: .86rem; }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -2890,8 +3217,16 @@ st.markdown("""
 with st.sidebar:
 
     # 🧭 Centro di Controllo – Selezione ruolo (TOP)
-    st.markdown("""<div class='ctrl-card'><div class='ctrl-title'>CENTRO DI CONTROLLO</div></div>""", unsafe_allow_html=True)
-    
+    st.markdown("""<div class='ctrl-card'>
+  <div class='ctrl-kicker'>SALA OPERATIVA</div>
+  <div class='ctrl-main'>Console Operativa Sala Radio</div>
+  <div class='ctrl-sub'>Protezione Civile • Thiene</div>
+  <div class='ctrl-row'>
+  </div>
+</div>""", unsafe_allow_html=True)
+
+    render_semaforo_sidebar()  # 🚦 semaforo inbox/outbox_pending
+
     # 🧭 Selettore ruolo (safe): lock da QR e richiesta PIN per Sala
     if "ruolo_ui" not in st.session_state:
         st.session_state["ruolo_ui"] = "SALA OPERATIVA"
@@ -2928,6 +3263,247 @@ with st.sidebar:
     elif not st.session_state.get("AUTH_SALA_OK", False):
         st.caption("🔐 Sala Operativa protetta: inserisci PIN per sbloccare.")
         ensure_sala_auth()
+
+    # ⏱️ Orologio (UTC) sotto Stato Connessione
+    render_clock_in_sidebar(show_stopwatch=True)
+    # 📊 KPI Sidebar (subito sotto orologio)
+    _squads = st.session_state.get("squadre", None)
+    try:
+        squadre_registrate = len(_squads) if _squads is not None else 0
+    except Exception:
+        squadre_registrate = 0
+
+    _brog = st.session_state.get("brogliaccio", st.session_state.get("registro", [])) or []
+    _inbox = st.session_state.get("inbox", st.session_state.get("avvisi_inbox", st.session_state.get("inbox_avvisi", []))) or []
+    try:
+        comunicazioni_effettuate = int(len(_brog)) + int(len(_inbox))
+    except Exception:
+        comunicazioni_effettuate = 0
+
+    st.markdown(
+        f"""
+        <div class='sidebar-kpi-card'>
+          <div class='sidebar-kpi-grid'>
+            <div class='sidebar-kpi-item'>
+              <div class='sidebar-kpi-num'>👥 {squadre_registrate}</div>
+              <div class='sidebar-kpi-lab'>Squadre registrate</div>
+            </div>
+            <div class='sidebar-kpi-item'>
+              <div class='sidebar-kpi-num'>📡 {comunicazioni_effettuate}</div>
+              <div class='sidebar-kpi-lab'>Comunicazioni</div>
+            </div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+    ruolo = st.session_state.get("ruolo_ui", "SALA OPERATIVA")
+
+    # (Navigazione rimossa: ruolo gestito in alto)
+
+    if ruolo == "SALA OPERATIVA":
+        st.markdown("## ➕ SQUADRE ATTIVE")
+        st.caption(f"Totale: **{len(st.session_state.squadre)}**")
+
+        squadre_sorted = sorted(list(st.session_state.squadre.keys()))
+
+        # pulizia selezioni se una squadra viene rinominata/eliminata
+        if st.session_state.get("team_open") and st.session_state.team_open not in st.session_state.squadre:
+            st.session_state.team_open = None
+        if st.session_state.get("team_edit_open") and st.session_state.team_edit_open not in st.session_state.squadre:
+            st.session_state.team_edit_open = None
+        if st.session_state.get("team_qr_open") and st.session_state.team_qr_open not in st.session_state.squadre:
+            st.session_state.team_qr_open = None
+
+        for team in squadre_sorted:
+            inf = get_squadra_info(team)
+            hx = team_hex(team)
+            capo_txt = inf["capo"] if inf["capo"] else "—"
+            tel_txt = inf["tel"] if inf["tel"] else "—"
+            tetra_txt = (inf.get("tetra_id") or "").strip() or "—"
+
+            exp_open = (st.session_state.get("team_open") == team)
+            with st.expander(f"{team_icon(team)}  {team}", expanded=exp_open):
+                st.markdown(
+                    f"<div style='display:flex;align-items:center;gap:10px;'>"
+                    f"<div class='pc-sqdot' style='background:{hx};margin-top:0;'></div>"
+                    f"<div style='flex:1;'>"
+                    f"<div class='pc-sqname' style='font-size:1.02rem'>{team_icon(team)} {team}</div>"
+                    f"<div class='pc-sqsub'>👤 {capo_txt} · 📻 {tetra_txt} · 📞 {tel_txt}</div>"
+                    f"</div></div>",
+                    unsafe_allow_html=True,
+                )
+
+                st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
+
+                
+                # Riga comandi (chip a sinistra + icone a destra)
+                # → pulsanti piccoli e uniformi (nessun r1/r2... che poi si rompe con indent)
+                c1, c2, c3, c4, c5, c6 = st.columns([6, 1, 1, 1, 1, 1], gap="small")
+
+                with c1:
+                    st.markdown(chip_stato(inf["stato"]), unsafe_allow_html=True)
+
+                # ✏️ Modifica (apre form sotto il nome)
+                with c2:
+                    if st.button("✏️", key=f"open_edit_{team}", help="Modifica squadra", type="secondary"):
+                        st.session_state.team_open = team
+                        st.session_state.team_edit_open = team
+                        st.session_state.team_qr_open = None
+                        st.session_state["_del_arm"] = None
+                        st.rerun()
+
+                # 📱 QR
+                with c3:
+                    if st.button("📱", key=f"open_qr_{team}", help="Mostra QR", type="secondary"):
+                        st.session_state.team_open = team
+                        st.session_state.team_qr_open = team
+                        st.session_state.team_edit_open = None
+                        st.session_state["_del_arm"] = None
+                        st.rerun()
+
+                # 📞 Chiama (link tel: in stile pulsante icona)
+                with c4:
+                    safe_tel = re.sub(r"[^0-9+]", "", (inf.get("tel") or "").strip())
+                    if safe_tel:
+                        st.markdown(
+                            f"""<a class="pc-icon-linkbtn" href="tel:{safe_tel}" title="Chiama">📞</a>""",
+                            unsafe_allow_html=True,
+                        )
+                    else:
+                        st.button("📞", key=f"call_dis_{team}", help="Nessun telefono", type="secondary", disabled=True)
+
+                # ♻️ Token
+                with c5:
+                    if st.button("♻️", key=f"regen_tok_{team}", help="Rigenera token", type="secondary"):
+                        regenerate_team_token(team)
+                        st.session_state.team_open = team
+                        st.session_state.team_qr_open = team
+                        st.session_state.team_edit_open = None
+                        st.success("Token rigenerato ✅")
+                        st.rerun()
+
+                # 🗑️ Elimina (arm)
+                with c6:
+                    if st.button("🗑️", key=f"del_{team}", help="Elimina squadra", type="secondary"):
+                        st.session_state.team_open = team
+                        st.session_state["_del_arm"] = team
+                        st.session_state.team_edit_open = None
+                        st.session_state.team_qr_open = None
+                        st.rerun()
+
+                # --- Modifica sotto il nome (solo se aperta) ---
+                if st.session_state.get("team_edit_open") == team:
+                    st.markdown("### ✏️ Modifica squadra")
+
+                    with st.form(f"form_edit_{team}"):
+                        new_name = st.text_input("Nome squadra", value=team, help="Il nome viene salvato in MAIUSCOLO")
+                        new_capo = st.text_input("Caposquadra", value=inf["capo"], placeholder="Es. Rossi Mario")
+                        new_tel = st.text_input("Telefono", value=inf["tel"], placeholder="Es. 3331234567")
+                        new_tetra = st.text_input("ID Radio TETRA", value=inf.get("tetra_id",""), placeholder="Es. ISSI / Terminale")
+                        cA, cB = st.columns(2)
+                        save = cA.form_submit_button("💾 Salva")
+                        close = cB.form_submit_button("✅ Chiudi")
+
+                    if save:
+                        ok, msg = update_team(team, new_name, new_capo, new_tel, new_tetra)
+                        (st.success if ok else st.warning)(msg)
+                        if ok:
+                            new_t = (new_name or "").strip().upper()
+                            st.session_state.team_open = new_t
+                            st.session_state.team_edit_open = None
+                            st.session_state.team_qr_open = None
+                            st.rerun()
+
+                    if close:
+                        st.session_state.team_edit_open = None
+                        st.rerun()
+
+                # --- QR sotto il nome (solo se aperto) ---
+                if st.session_state.get("team_qr_open") == team:
+                    st.markdown("### 📱 QR accesso caposquadra")
+
+                    base_url = (st.session_state.get("EFFECTIVE_URL") or "").strip().rstrip("/")
+                    if not base_url:
+                        st.info("QR disattivato: OFFLINE totale oppure (ONLINE) URL pubblico non impostato.")
+                    else:
+                        token = st.session_state.squadre[team].get("token", "")
+                        if not base_url.startswith("http"):
+                            st.warning("Imposta un URL pubblico valido (https://...) quando sei ONLINE.")
+                        else:
+                            team_q = urllib.parse.quote(team)
+                            link = f"{base_url}/?mode=campo&team={team_q}&token={token}"
+                            png = qr_png_bytes(link)
+                            st.image(png, width=230)
+                            st.download_button(
+                                "⬇️📱",
+                                data=png,
+                                file_name=f"QR_{team.replace(' ', '_')}.png",
+                                mime="image/png",
+                                key=f"dlqr_{team}",
+                            )
+                            st.markdown(f"<div class='qr-linkbox'><span class='qr-linklabel'>🔗 Link QR</span>{link}</div>", unsafe_allow_html=True)
+                            exp = (st.session_state.squadre.get(team, {}).get('token_expires_at') or '').strip()
+                            last = (st.session_state.squadre.get(team, {}).get('token_last_access') or '').strip()
+                            meta_bits = []
+                            if exp:
+                                meta_bits.append(f"Scade: {exp}")
+                            if last:
+                                meta_bits.append(f"Ultimo accesso: {last}")
+                            if meta_bits:
+                                st.caption(" · ".join(meta_bits))
+                    if st.session_state.get("_del_arm") == team:
+                        st.warning("Conferma eliminazione: questa azione è irreversibile.")
+                        conf = st.checkbox("Confermo eliminazione squadra", key=f"confdel_{team}")
+                        cD, cE = st.columns(2)
+                        if cD.button("✅ Conferma elimina", disabled=not conf, key=f"confirm_del_{team}"):
+                            ok, msg = delete_team(team)
+                            (st.success if ok else st.warning)(msg)
+                            st.session_state["_del_arm"] = None
+                            st.session_state.team_open = None
+                            st.rerun()
+                        if cE.button("❌ Annulla", key=f"cancel_del_{team}"):
+                            st.session_state["_del_arm"] = None
+                            st.rerun()
+
+        st.markdown("## ➕ CREA SQUADRA")
+        with st.form("form_add_team", clear_on_submit=True):
+            n_sq = st.text_input("Nome squadra", placeholder="Es. SQUADRA 2 / ALFA / DELTA…")
+            capo = st.text_input("Nome caposquadra", placeholder="Es. Rossi Mario")
+            tel = st.text_input("Telefono caposquadra", placeholder="Es. 3331234567")
+            tetra_id = st.text_input("ID Radio TETRA", placeholder="Es. ISSI / Terminale")
+            submitted = st.form_submit_button("➕ AGGIUNGI SQUADRA")
+        if submitted:
+            nome = (n_sq or "").strip().upper()
+            if not nome:
+                st.warning("Inserisci il nome squadra.")
+            elif nome in st.session_state.squadre:
+                st.warning("Esiste già una squadra con questo nome.")
+            else:
+                token = uuid.uuid4().hex
+                used = {(inf.get("mhex") or "").strip() for inf in st.session_state.squadre.values()}
+                used = {hx for hx in used if hx.startswith("#") and len(hx) == 7}
+                colore = _pick_next_team_color(set(used))
+
+                st.session_state.squadre[nome] = {
+                    "stato": "In attesa al COC",
+                    "capo": (capo or "").strip(),
+                    "tel": (tel or "").strip(),
+                    "tetra_id": (tetra_id or "").strip(),
+                    "token": token,
+                    "token_created_at": datetime.now().isoformat(timespec="seconds"),
+                    "token_expires_at": (datetime.now() + timedelta(hours=TOKEN_TTL_HOURS)).isoformat(timespec="seconds"),
+                    "token_last_access": "",
+                    "mhex": colore,
+                }
+                save_data_to_disk()
+                # apri subito la scheda e mostra QR
+                st.session_state.team_open = nome
+                st.session_state.team_qr_open = nome
+                st.session_state.team_edit_open = None
+                st.success("✅ Squadra creata! QR visibile sotto.")
+                st.rerun()
+
 # --- STATO CONNESSIONE (OFFLINE / LAN / ONLINE) ---
     st.markdown(
         """
@@ -2946,6 +3522,35 @@ with st.sidebar:
         section[data-testid="stSidebar"] div[data-testid="stExpander"] * {
             color: #ffffff !important;
         }
+        
+        /* === NET STATUS CARD (colorata) === */
+        .net-card{
+            border-radius: 14px;
+            padding: 10px 10px;
+            margin-top: 8px;
+            margin-bottom: 8px;
+            border: 1px solid rgba(148,163,184,.35);
+            background: rgba(15,23,42,.45);
+        }
+        .net-pill{
+            display:inline-block;
+            padding: 4px 10px;
+            border-radius: 999px;
+            font-weight: 950;
+            letter-spacing: .6px;
+            text-transform: uppercase;
+            font-size: .78rem;
+            margin-bottom: 6px;
+        }
+        .net-offline{ border-color: rgba(220,38,38,.55); background: rgba(220,38,38,.12); }
+        .net-offline .net-pill{ background: rgba(220,38,38,.92); }
+        .net-lan{ border-color: rgba(245,158,11,.55); background: rgba(245,158,11,.12); }
+        .net-lan .net-pill{ background: rgba(245,158,11,.92); }
+        .net-online{ border-color: rgba(34,197,94,.55); background: rgba(34,197,94,.12); }
+        .net-online .net-pill{ background: rgba(34,197,94,.92); }
+        .net-line{ font-size: .88rem; line-height: 1.25; margin-top: 2px; }
+        .net-mono code{ font-size: .78rem !important; }
+    
         </style>
         """,
         unsafe_allow_html=True,
@@ -2990,17 +3595,19 @@ with st.sidebar:
         lan_only = (not offline) and (not internet) and lan
         online = (not offline) and internet
 
+        # ---- Card colorata stato rete ----
+        status_cls = "net-offline" if offline else ("net-lan" if lan_only else "net-online")
         if offline:
-            st.markdown("🔌 **OFFLINE TOTALE**")
-            st.markdown("Solo Sala Operativa.")
+            icon, pill = "🔌", "OFFLINE"
+            line1 = "Solo Sala Operativa (nessuna rete)."
             effective_url = ""
         elif lan_only:
+            icon, pill = "📡", "LAN"
+            line1 = "Modulo campo attivo in rete locale."
             effective_url = f"http://{ip}:{APP_PORT}"
-            st.markdown("📡 **LAN LOCALE**")
-            st.markdown("Modulo campo attivo in rete locale.")
-            st.code(effective_url)
         else:
-            st.markdown("🌍 **ONLINE**")
+            icon, pill = "🌍", "ONLINE"
+            line1 = "Internet disponibile."
             # Auto-compila (se possibile) l'URL pubblico quando ONLINE e il campo è vuoto
             if not (st.session_state.get("PUBLIC_URL") or "").strip():
                 _auto = _guess_public_url()
@@ -3015,7 +3622,18 @@ with st.sidebar:
                         st.session_state["PUBLIC_URL"] = f"http://{_ip}:{_port}"
                 except Exception:
                     pass
+            effective_url = ""
 
+        st.markdown(
+            f"""<div class='net-card {status_cls}'>
+                <div class='net-pill'>{icon} {pill}</div>
+                <div class='net-line'>IP locale: <b>{ip}</b></div>
+                <div class='net-line'>{line1}</div>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+        if effective_url:
+            st.code(effective_url)
             public_url = (
                 st.text_input(
                     "URL pubblico (https://…)",
@@ -3045,230 +3663,7 @@ with st.sidebar:
         st.session_state.NET_LAN_ONLY = lan_only
         st.session_state.NET_ONLINE = online
 
-    # ⏱️ Orologio (UTC) sotto Stato Connessione
-    render_clock_in_sidebar(show_stopwatch=True)
-    # 📊 KPI Sidebar (subito sotto orologio)
-    _squads = st.session_state.get("squadre", None)
-    try:
-        squadre_registrate = len(_squads) if _squads is not None else 0
-    except Exception:
-        squadre_registrate = 0
-
-    _brog = st.session_state.get("brogliaccio", st.session_state.get("registro", [])) or []
-    _inbox = st.session_state.get("inbox", st.session_state.get("avvisi_inbox", st.session_state.get("inbox_avvisi", []))) or []
-    try:
-        comunicazioni_effettuate = int(len(_brog)) + int(len(_inbox))
-    except Exception:
-        comunicazioni_effettuate = 0
-
-    st.markdown(
-        f"""
-        <div class='sidebar-kpi-card'>
-          <div class='sidebar-kpi-grid'>
-            <div class='sidebar-kpi-item'>
-              <div class='sidebar-kpi-num'>👥 {squadre_registrate}</div>
-              <div class='sidebar-kpi-lab'>Squadre registrate</div>
-            </div>
-            <div class='sidebar-kpi-item'>
-              <div class='sidebar-kpi-num'>📡 {comunicazioni_effettuate}</div>
-              <div class='sidebar-kpi-lab'>Comunicazioni</div>
-            </div>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-    st.divider()
-
-    ruolo = st.session_state.get("ruolo_ui", "SALA OPERATIVA")
-
-    # (Navigazione rimossa: ruolo gestito in alto)
-
-    if ruolo == "SALA OPERATIVA":
-        st.markdown("## ➕ SQUADRE ATTIVE")
-        st.caption(f"Totale: **{len(st.session_state.squadre)}**")
-
-        squadre_sorted = sorted(list(st.session_state.squadre.keys()))
-
-        # pulizia selezioni se una squadra viene rinominata/eliminata
-        if st.session_state.get("team_open") and st.session_state.team_open not in st.session_state.squadre:
-            st.session_state.team_open = None
-        if st.session_state.get("team_edit_open") and st.session_state.team_edit_open not in st.session_state.squadre:
-            st.session_state.team_edit_open = None
-        if st.session_state.get("team_qr_open") and st.session_state.team_qr_open not in st.session_state.squadre:
-            st.session_state.team_qr_open = None
-
-        for team in squadre_sorted:
-            inf = get_squadra_info(team)
-            hx = team_hex(team)
-            capo_txt = inf["capo"] if inf["capo"] else "—"
-            tel_txt = inf["tel"] if inf["tel"] else "—"
-
-            exp_open = (st.session_state.get("team_open") == team)
-            with st.expander(f"{team_icon(team)}  {team}", expanded=exp_open):
-                st.markdown(
-                    f"<div style='display:flex;align-items:center;gap:10px;'>"
-                    f"<div class='pc-sqdot' style='background:{hx};margin-top:0;'></div>"
-                    f"<div style='flex:1;'>"
-                    f"<div class='pc-sqname' style='font-size:1.02rem'>{team_icon(team)} {team}</div>"
-                    f"<div class='pc-sqsub'>👤 {capo_txt} · 📞 {tel_txt}</div>"
-                    f"</div></div>",
-                    unsafe_allow_html=True,
-                )
-
-                
-                # Riga comandi (chip a sinistra + icone a destra)
-                r1, r2, r3, r4, r5 = st.columns([6, 1, 1, 1, 1])
-
-                with r1:
-                    st.markdown(chip_stato(inf["stato"]), unsafe_allow_html=True)
-
-                # ✏️ Modifica (apre form sotto il nome)
-                if r2.button("✏️", key=f"open_edit_{team}", help="Modifica squadra", type="secondary"):
-                    st.session_state.team_open = team
-                    st.session_state.team_edit_open = team
-                    st.session_state.team_qr_open = None
-                    st.session_state["_del_arm"] = None
-                    st.rerun()
-
-                # 📱 QR
-                if r3.button("📱", key=f"open_qr_{team}", help="Mostra QR", type="secondary"):
-                    st.session_state.team_open = team
-                    st.session_state.team_qr_open = team
-                    st.session_state.team_edit_open = None
-                    st.session_state["_del_arm"] = None
-                    st.rerun()
-
-                # ♻️ Token
-                if r4.button("♻️", key=f"regen_tok_{team}", help="Rigenera token", type="secondary"):
-                    regenerate_team_token(team)
-                    st.session_state.team_open = team
-                    st.session_state.team_qr_open = team
-                    st.session_state.team_edit_open = None
-                    st.success("Token rigenerato ✅")
-                    st.rerun()
-
-                # 🗑️ Elimina (arm)
-                if r5.button("🗑️", key=f"del_{team}", help="Elimina squadra", type="secondary"):
-                    st.session_state.team_open = team
-                    st.session_state["_del_arm"] = team
-                    st.session_state.team_edit_open = None
-                    st.session_state.team_qr_open = None
-                    st.rerun()
-                # --- Modifica sotto il nome (solo se aperta) ---
-                if st.session_state.get("team_edit_open") == team:
-                    st.divider()
-                    st.markdown("### ✏️ Modifica squadra")
-
-                    with st.form(f"form_edit_{team}"):
-                        new_name = st.text_input("Nome squadra", value=team, help="Il nome viene salvato in MAIUSCOLO")
-                        new_capo = st.text_input("Caposquadra", value=inf["capo"], placeholder="Es. Rossi Mario")
-                        new_tel = st.text_input("Telefono", value=inf["tel"], placeholder="Es. 3331234567")
-                        cA, cB = st.columns(2)
-                        save = cA.form_submit_button("💾 Salva")
-                        close = cB.form_submit_button("✅ Chiudi")
-
-                    if save:
-                        ok, msg = update_team(team, new_name, new_capo, new_tel)
-                        (st.success if ok else st.warning)(msg)
-                        if ok:
-                            new_t = (new_name or "").strip().upper()
-                            st.session_state.team_open = new_t
-                            st.session_state.team_edit_open = None
-                            st.session_state.team_qr_open = None
-                            st.rerun()
-
-                    if close:
-                        st.session_state.team_edit_open = None
-                        st.rerun()
-
-                # --- QR sotto il nome (solo se aperto) ---
-                if st.session_state.get("team_qr_open") == team:
-                    st.divider()
-                    st.markdown("### 📱 QR accesso caposquadra")
-
-                    base_url = (st.session_state.get("EFFECTIVE_URL") or "").strip().rstrip("/")
-                    if not base_url:
-                        st.info("QR disattivato: OFFLINE totale oppure (ONLINE) URL pubblico non impostato.")
-                    else:
-                        token = st.session_state.squadre[team].get("token", "")
-                        if not base_url.startswith("http"):
-                            st.warning("Imposta un URL pubblico valido (https://...) quando sei ONLINE.")
-                        else:
-                            team_q = urllib.parse.quote(team)
-                            link = f"{base_url}/?mode=campo&team={team_q}&token={token}"
-                            png = qr_png_bytes(link)
-                            st.image(png, width=230)
-                            st.download_button(
-                                "⬇️📱",
-                                data=png,
-                                file_name=f"QR_{team.replace(' ', '_')}.png",
-                                mime="image/png",
-                                key=f"dlqr_{team}",
-                            )
-                            st.markdown(f"<div class='qr-linkbox'><span class='qr-linklabel'>🔗 Link QR</span>{link}</div>", unsafe_allow_html=True)
-                            exp = (st.session_state.squadre.get(team, {}).get('token_expires_at') or '').strip()
-                            last = (st.session_state.squadre.get(team, {}).get('token_last_access') or '').strip()
-                            meta_bits = []
-                            if exp:
-                                meta_bits.append(f"Scade: {exp}")
-                            if last:
-                                meta_bits.append(f"Ultimo accesso: {last}")
-                            if meta_bits:
-                                st.caption(" · ".join(meta_bits))
-                    if st.session_state.get("_del_arm") == team:
-                        st.divider()
-                        st.warning("Conferma eliminazione: questa azione è irreversibile.")
-                        conf = st.checkbox("Confermo eliminazione squadra", key=f"confdel_{team}")
-                        cD, cE = st.columns(2)
-                        if cD.button("✅ Conferma elimina", disabled=not conf, key=f"confirm_del_{team}"):
-                            ok, msg = delete_team(team)
-                            (st.success if ok else st.warning)(msg)
-                            st.session_state["_del_arm"] = None
-                            st.session_state.team_open = None
-                            st.rerun()
-                        if cE.button("❌ Annulla", key=f"cancel_del_{team}"):
-                            st.session_state["_del_arm"] = None
-                            st.rerun()
-
-        st.divider()
-        st.markdown("## ➕ CREA SQUADRA")
-        with st.form("form_add_team", clear_on_submit=True):
-            n_sq = st.text_input("Nome squadra", placeholder="Es. SQUADRA 2 / ALFA / DELTA…")
-            capo = st.text_input("Nome caposquadra", placeholder="Es. Rossi Mario")
-            tel = st.text_input("Telefono caposquadra", placeholder="Es. 3331234567")
-            submitted = st.form_submit_button("➕ AGGIUNGI SQUADRA")
-        if submitted:
-            nome = (n_sq or "").strip().upper()
-            if not nome:
-                st.warning("Inserisci il nome squadra.")
-            elif nome in st.session_state.squadre:
-                st.warning("Esiste già una squadra con questo nome.")
-            else:
-                token = uuid.uuid4().hex
-                used = {(inf.get("mhex") or "").strip() for inf in st.session_state.squadre.values()}
-                used = {hx for hx in used if hx.startswith("#") and len(hx) == 7}
-                colore = _pick_next_team_color(set(used))
-
-                st.session_state.squadre[nome] = {
-                    "stato": "In attesa al COC",
-                    "capo": (capo or "").strip(),
-                    "tel": (tel or "").strip(),
-                    "token": token,
-                    "token_created_at": datetime.now().isoformat(timespec="seconds"),
-                    "token_expires_at": (datetime.now() + timedelta(hours=TOKEN_TTL_HOURS)).isoformat(timespec="seconds"),
-                    "token_last_access": "",
-                    "mhex": colore,
-                }
-                save_data_to_disk()
-                # apri subito la scheda e mostra QR
-                st.session_state.team_open = nome
-                st.session_state.team_qr_open = nome
-                st.session_state.team_edit_open = None
-                st.success("✅ Squadra creata! QR visibile sotto.")
-                st.rerun()
 # BACKUP in fondo
-    st.divider()
     st.markdown("## 💾 Backup / Ripristino")
 
     payload_now = {
@@ -3319,8 +3714,8 @@ with st.sidebar:
 logo_data_uri = img_to_base64(LOGO_PATH)
 logo_html = f"<img class='pc-logo' src='{logo_data_uri}' />" if logo_data_uri else ""
 # Mostra il badge ruolo solo in console (non nel Modulo da Campo)
-is_field_ui = bool(st.session_state.get("field_ok")) or bool(LOCK_FIELD)
-badge_ruolo = ruolo
+is_field_ui = (str(qp_mode).lower() == "campo") or bool(st.session_state.get("field_ok")) or bool(LOCK_FIELD)
+badge_ruolo = st.session_state.get("ruolo_ui", "SALA OPERATIVA")
 badge_html = f'<div class="pc-badge">📡 {badge_ruolo}</div>' if not is_field_ui else ""
 
 st.markdown(
@@ -3339,11 +3734,12 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+
 # =========================
 # MODULO CAPOSQUADRA
 # =========================
 if badge_ruolo == "MODULO CAPOSQUADRA":
-    st.markdown("<div class='pc-card pc-card-radio'>", unsafe_allow_html=True)
+    st.markdown("<div class=''>", unsafe_allow_html=True)
     st.subheader("📱 Modulo da campo")
     # FIELD_UI_V3
     # Header comandi (mobile friendly)
@@ -3356,7 +3752,6 @@ if badge_ruolo == "MODULO CAPOSQUADRA":
             sun_mode = st.toggle("☀️ Modalità Sole", value=False, help="Contrasto alto per uso in esterno")
         with c_ui2:
             st.caption("Suggerimento: usa IP in LAN (http://IP:8501) per GPS più affidabile rispetto a localhost.")
-
 
     _net_ok = bool(st.session_state.get("NET_ONLINE") or st.session_state.get("NET_LAN_ONLY"))
     _net_label = "🟢 Online" if st.session_state.get("NET_ONLINE") else ("🟡 LAN" if st.session_state.get("NET_LAN_ONLY") else "🔴 Offline")
@@ -3431,7 +3826,6 @@ section.main .block-container {{padding-top: 1rem;}}
         unsafe_allow_html=True,
     )
 
-
     # --- Stato invii (persistenza su disco) ---
     _outbox_init()
     if st.session_state.get("outbox_pending"):
@@ -3459,7 +3853,6 @@ section.main .block-container {{padding-top: 1rem;}}
             if ls.get("pos"):
                 st.markdown(f"**📍 Posizione:** {ls.get('pos')}")
             st.markdown(f"**💾 Stato:** {ls.get('status','—')}")
-
 
     if st.session_state.get("field_ok"):
         sq_c = st.session_state.get("field_team")
@@ -3489,8 +3882,6 @@ section.main .block-container {{padding-top: 1rem;}}
             return mp
         return None
 
-
-
     # GPS dal telefono (richiede permesso posizione nel browser)
     if "field_gps" not in st.session_state:
         st.session_state.field_gps = None
@@ -3510,7 +3901,6 @@ section.main .block-container {{padding-top: 1rem;}}
                 st.caption("GPS: **non disponibile**. Consenti la posizione sul telefono e premi 📍.")
         else:
             st.caption("GPS disattivato (Privacy).")
-
 
     if st.session_state.get("_gps_dep_missing"):
         st.info("ℹ️ GPS automatico: installa `streamlit-js-eval` (pip install streamlit-js-eval). Su smartphone, consenti la posizione nel browser. In HTTP, alcuni browser bloccano il GPS: in LAN usa l'IP (http://IP:8501) oppure HTTPS in Cloud.")
@@ -3533,7 +3923,7 @@ section.main .block-container {{padding-top: 1rem;}}
                     _dlat, _dlon = 45.0, 11.0
                 lat_man = mc1.number_input("LAT (manuale)", value=_dlat, format="%.6f", key="field_lat_manual")
                 lon_man = mc2.number_input("LON (manuale)", value=_dlon, format="%.6f", key="field_lon_manual")
-                
+
                 st.session_state.field_manual_pos = [float(lat_man), float(lon_man)]
     else:
         st.session_state.field_manual_pos = [None, None]
@@ -3623,7 +4013,6 @@ section.main .block-container {{padding-top: 1rem;}}
             st.session_state["field_last_template"] = ""
             st.session_state["campo_template_text"] = ""
             st.session_state["pending_field_msg_rapido"] = ""  # clear input safely next rerun
-    st.divider()
     st.markdown("**⚡ Template rapidi (per rapporto completo)**")
     tplc_cols = st.columns(3)
     for i, (lbl, txt) in enumerate(tpl_defs):
@@ -3640,7 +4029,6 @@ section.main .block-container {{padding-top: 1rem;}}
             st.session_state["field_msg_completo"] = st.session_state.pop("pending_field_msg_completo")
 
         msg_c = st.text_area("DESCRIZIONE:", key="field_msg_completo")
-
 
         foto = st.file_uploader("FOTO:", type=["jpg", "jpeg", "png"])
         if foto is not None:
@@ -3682,8 +4070,6 @@ section.main .block-container {{padding-top: 1rem;}}
 # =========================
 # SALA OPERATIVA
 # =========================
-st.markdown("<h1 style='text-align:center;color:#0d47a1;margin-top:-10px;'>📡 CONSOLE SALA RADIO</h1>", unsafe_allow_html=True)
-
 st_lista = [info.get("stato", "In attesa al COC") for info in st.session_state.squadre.values()]
 c1, c2, c3, c4, c5 = st.columns(5)
 
@@ -3698,15 +4084,23 @@ def metric_box(col, icon, label, value):
 
 c1.markdown(metric_box(COLORI_STATI["In uscita dal COC"]["hex"], "🚪", "Uscita", st_lista.count("In uscita dal COC")), unsafe_allow_html=True)
 c2.markdown(metric_box(COLORI_STATI["Intervento in corso"]["hex"], "🔥", "In corso", st_lista.count("Intervento in corso")), unsafe_allow_html=True)
-c3.markdown(metric_box(COLORI_STATI["Intervento concluso"]["hex"], "✅", "Conclusi", st.session_state.get("cnt_conclusi", 0)), unsafe_allow_html=True)
 with c3:
-    if st.button("↺ Reset conclusi", help="Azzera il contatore cumulativo degli interventi conclusi", key="reset_cnt_conclusi", use_container_width=True):
+    # KPI Conclusi (grafica originale) + reset allineato DENTRO al riquadro
+    st.markdown(metric_box(COLORI_STATI["Intervento concluso"]["hex"], "✅", "Conclusi", st.session_state.get("cnt_conclusi", 0)), unsafe_allow_html=True)
+
+    # Overlay: porta il bottone dentro al quadrato (bottom-right)
+    st.markdown("<div class='pc-reset-over'>", unsafe_allow_html=True)
+    if st.button("↺", help="Reset conclusi", key="reset_cnt_conclusi", type="secondary"):
         st.session_state.cnt_conclusi = 0
         save_data_to_disk()
         st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
 c4.markdown(metric_box(COLORI_STATI["Rientrata al Coc"]["hex"], "↩️", "Rientro", st_lista.count("Rientrata al Coc")), unsafe_allow_html=True)
 c5.markdown(metric_box(COLORI_STATI["In attesa al COC"]["hex"], "🏠", "Al COC", st_lista.count("In attesa al COC")), unsafe_allow_html=True)
 
+# 👥 Squadre registrate (badge nel MAIN) — sotto i KPI
+if not is_field_ui:
+    render_main_team_badges_panel()
 
 # =========================
 # INBOX APPROVAZIONE
@@ -3759,7 +4153,7 @@ def render_inbox_approval():
 # =========================
 # DATI EVENTO
 # =========================
-st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
+st.markdown("<div class=''>", unsafe_allow_html=True)
 st.subheader("📋 Dati Intervento ed Evento")
 cd1, cd2, cd3, cd4 = st.columns([1, 1, 1, 2])
 
@@ -3783,118 +4177,120 @@ with t_rad:
     l, r = st.columns([1, 1.2])
 
     with l:
-        st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
-        # ---- Inserimento comunicazione (UI reattiva: toggle coordinate immediato) ----
-        st.session_state.op_name = st.text_input("OPERATORE RADIO", value=st.session_state.op_name, key="radio_operatore")
-        chi = st.radio("CHI CHIAMA?", ["SALA OPERATIVA", "SQUADRA ESTERNA"], key="radio_chi_chiama")
+        with st.container(border=True):
+            st.markdown("<div class=''>", unsafe_allow_html=True)
+            # ---- Inserimento comunicazione (UI reattiva: toggle coordinate immediato) ----
+            st.session_state.op_name = st.text_input("OPERATORE RADIO", value=st.session_state.op_name, key="radio_operatore")
+            chi = st.radio("CHI CHIAMA?", ["SALA OPERATIVA", "SQUADRA ESTERNA"], key="radio_chi_chiama")
 
-        sq = st.selectbox("SQUADRA", list(st.session_state.squadre.keys()), key="radio_squadra_sel", on_change=_sync_radio_status_to_team)
-        inf = get_squadra_info(sq)
-        st.caption(f"👤 Caposquadra: {inf['capo'] or '—'} · 📞 {inf['tel'] or '—'}")
+            sq = st.selectbox("SQUADRA", list(st.session_state.squadre.keys()), key="radio_squadra_sel", on_change=_sync_radio_status_to_team)
+            inf = get_squadra_info(sq)
+            st.caption(f"👤 Caposquadra: {inf['capo'] or '—'} · 📞 {inf['tel'] or '—'}")
 
-        _stati = list(COLORI_STATI.keys())
-        _cur = st.session_state.get("radio_stato_sel")
-        _idx = _stati.index(_cur) if _cur in _stati else (_stati.index(_get_last_team_status(sq)) if sq in st.session_state.squadre else 0)
-        st_s = st.selectbox("STATO", _stati, index=_idx, key="radio_stato_sel")
+            _stati = list(COLORI_STATI.keys())
+            _cur = st.session_state.get("radio_stato_sel")
+            _idx = _stati.index(_cur) if _cur in _stati else (_stati.index(_get_last_team_status(sq)) if sq in st.session_state.squadre else 0)
+            st_s = st.selectbox("STATO", _stati, index=_idx, key="radio_stato_sel")
 
-        # --- reset campi form radio (DEVE avvenire prima dei widget) ---
-        if st.session_state.pop("_clear_radio_form", False):
-            st.session_state["radio_messaggio"] = ""
-            st.session_state["radio_risposta"] = ""
-            st.session_state["radio_lat"] = ""
-            st.session_state["radio_lon"] = ""
-            st.session_state["radio_save_coords"] = False
-        mit = st.text_area("MESSAGGIO", key="radio_messaggio", on_change=_mark_typing)
-        ris = st.text_area("RISPOSTA", key="radio_risposta", on_change=_mark_typing)
-        st.markdown(chip_stato(st_s), unsafe_allow_html=True)
+            # --- reset campi form radio (DEVE avvenire prima dei widget) ---
+            if st.session_state.pop("_clear_radio_form", False):
+                st.session_state["radio_messaggio"] = ""
+                st.session_state["radio_risposta"] = ""
+                st.session_state["radio_lat"] = ""
+                st.session_state["radio_lon"] = ""
+                st.session_state["radio_save_coords"] = False
+            mit = st.text_area("MESSAGGIO", key="radio_messaggio", on_change=_mark_typing)
+            ris = st.text_area("RISPOSTA", key="radio_risposta", on_change=_mark_typing)
+            st.markdown(chip_stato(st_s), unsafe_allow_html=True)
 
-        save_coords = st.toggle(
-            "📍 Salva coordinate (solo se comunicate)",
-            value=bool(st.session_state.get("radio_save_coords", False)),
-            key="radio_save_coords",
-            help="Se OFF l'evento viene salvato senza coordinate (più leggero; report senza mappa)."
-        )
+            save_coords = st.toggle(
+                "📍 Salva coordinate (solo se comunicate)",
+                value=bool(st.session_state.get("radio_save_coords", False)),
+                key="radio_save_coords",
+                help="Se OFF l'evento viene salvato senza coordinate (più leggero; report senza mappa)."
+            )
 
-        lat = lon = None
-        if save_coords:
-            c_g1, c_g2 = st.columns(2)
-            # Normalizza valori in session_state (evita ValueError quando sono stringhe vuote)
-            st.session_state["radio_lat"] = _safe_float(st.session_state.get("radio_lat"), st.session_state.pos_mappa[0])
-            st.session_state["radio_lon"] = _safe_float(st.session_state.get("radio_lon"), st.session_state.pos_mappa[1])
+            lat = lon = None
+            if save_coords:
+                c_g1, c_g2 = st.columns(2)
+                # Normalizza valori in session_state (evita ValueError quando sono stringhe vuote)
+                st.session_state["radio_lat"] = _safe_float(st.session_state.get("radio_lat"), st.session_state.pos_mappa[0])
+                st.session_state["radio_lon"] = _safe_float(st.session_state.get("radio_lon"), st.session_state.pos_mappa[1])
 
-            lat = c_g1.number_input("LAT", value=float(st.session_state["radio_lat"]), format="%.6f", key="radio_lat")
-            lon = c_g2.number_input("LON", value=float(st.session_state["radio_lon"]), format="%.6f", key="radio_lon")
+                lat = c_g1.number_input("LAT", value=float(st.session_state["radio_lat"]), format="%.6f", key="radio_lat")
+                lon = c_g2.number_input("LON", value=float(st.session_state["radio_lon"]), format="%.6f", key="radio_lon")
 
-        b1, b2 = st.columns(2)
+            b1, b2 = st.columns(2)
 
-        # Metti in attesa: salva SOLO testo (senza cambiare stato)
-        if b1.button("⏳ METTI IN ATTESA", use_container_width=True, key="btn_mettti_in_attesa"):
-            # Salva in coda + nel brogliaccio, ma SENZA cambiare lo stato della squadra
-            if "reply_queue" not in st.session_state:
-                st.session_state.reply_queue = []
+            # Metti in attesa: salva SOLO testo (senza cambiare stato)
+            if b1.button("⏳ METTI IN ATTESA", use_container_width=True, key="btn_mettti_in_attesa"):
+                # Salva in coda + nel brogliaccio, ma SENZA cambiare lo stato della squadra
+                if "reply_queue" not in st.session_state:
+                    st.session_state.reply_queue = []
 
-            _eid = uuid.uuid4().hex
-            _pos = ([float(lat), float(lon)] if (save_coords and lat is not None and lon is not None) else None)
+                _eid = uuid.uuid4().hex
+                _pos = ([float(lat), float(lon)] if (save_coords and lat is not None and lon is not None) else None)
 
-            st.session_state.reply_queue.insert(0, {
-                "id": _eid,
-                "ora": datetime.now().strftime("%H:%M"),
-                "chi": chi,
-                "sq": sq,
-                # Chi chiama / chi deve rispondere (la squadra è quella selezionata al momento della messa in attesa)
-                "caller_label": ("SALA OPERATIVA" if str(chi).strip().upper().startswith("SALA") else f"SQUADRA {sq}"),
-                "answerer_label": (f"SQUADRA {sq}" if str(chi).strip().upper().startswith("SALA") else "SALA OPERATIVA"),
-                # Manteniamo anche il campo storico per compatibilità (SALA/SQUADRA)
-                "attesa_da": ("SQUADRA" if str(chi).strip().upper().startswith("SALA") else "SALA"),
-                "mit": mit,
-                "op": st.session_state.op_name,
-                "pos": _pos,
-                "reply": "",
-            })
+                st.session_state.reply_queue.insert(0, {
+                    "id": _eid,
+                    "ora": datetime.now().strftime("%H:%M"),
+                    "chi": chi,
+                    "sq": sq,
+                    # Chi chiama / chi deve rispondere (la squadra è quella selezionata al momento della messa in attesa)
+                    "caller_label": ("SALA OPERATIVA" if str(chi).strip().upper().startswith("SALA") else f"SQUADRA {sq}"),
+                    "answerer_label": (f"SQUADRA {sq}" if str(chi).strip().upper().startswith("SALA") else "SALA OPERATIVA"),
+                    # Manteniamo anche il campo storico per compatibilità (SALA/SQUADRA)
+                    "attesa_da": ("SQUADRA" if str(chi).strip().upper().startswith("SALA") else "SALA"),
+                    "mit": mit,
+                    "op": st.session_state.op_name,
+                    "pos": _pos,
+                    "reply": "",
+                    "st": st_s,
+                })
 
-            # Brogliaccio: annota il messaggio (risposta verrà compilata quando chiudi la coda)
-            try:
+                # Brogliaccio: annota il messaggio (risposta verrà compilata quando chiudi la coda)
+                try:
+                    st.session_state.brogliaccio.insert(
+                        0,
+                        {"id": _eid,
+                         "ora": datetime.now().strftime("%H:%M"),
+                         "chi": chi,
+                         "sq": sq,
+                         "caller_label": ("SALA OPERATIVA" if str(chi).strip().upper().startswith("SALA") else f"SQUADRA {sq}"),
+                         "answerer_label": (f"SQUADRA {sq}" if str(chi).strip().upper().startswith("SALA") else "SALA OPERATIVA"),
+                         "attesa_da": ("SQUADRA" if str(chi).strip().upper().startswith("SALA") else "SALA"),
+                         "st": st_s,
+                         "mit": mit,
+                         "ris": "",
+                         "op": st.session_state.op_name,
+                         "pos": _pos,
+                         "foto": None,
+                         "pending": True}
+                    )
+                except Exception:
+                    pass
+                save_data_to_disk()
+                st.session_state["_clear_radio_form"] = True
+                st.rerun()
+
+            if b2.button("✅ REGISTRA COMUNICAZIONE", use_container_width=True, key="btn_registra_comunicazione"):
+                pos = [float(lat), float(lon)] if (save_coords and lat is not None and lon is not None) else None
                 st.session_state.brogliaccio.insert(
                     0,
-                    {"id": _eid,
-                     "ora": datetime.now().strftime("%H:%M"),
-                     "chi": chi,
-                     "sq": sq,
-                     "caller_label": ("SALA OPERATIVA" if str(chi).strip().upper().startswith("SALA") else f"SQUADRA {sq}"),
-                     "answerer_label": (f"SQUADRA {sq}" if str(chi).strip().upper().startswith("SALA") else "SALA OPERATIVA"),
-                     "attesa_da": ("SQUADRA" if str(chi).strip().upper().startswith("SALA") else "SALA"),
-                     "st": None,
-                     "mit": mit,
-                     "ris": "",
-                     "op": st.session_state.op_name,
-                     "pos": _pos,
-                     "foto": None,
-                     "pending": True}
+                    {"ora": datetime.now().strftime("%H:%M"), "chi": chi, "sq": sq, "st": st_s,
+                     "mit": mit, "ris": ris, "op": st.session_state.op_name, "pos": pos, "foto": None}
                 )
-            except Exception:
-                pass
-            save_data_to_disk()
-            st.session_state["_clear_radio_form"] = True
-            st.rerun()
+                prev_st = st.session_state.squadre.get(sq, {}).get("stato")
+                st.session_state.squadre[sq]["stato"] = st_s
+                if st_s == "Intervento concluso" and prev_st != "Intervento concluso":
+                    st.session_state.cnt_conclusi = int(st.session_state.get("cnt_conclusi", 0) or 0) + 1
+                if pos:
+                    st.session_state.pos_mappa = pos
+                save_data_to_disk()
+                st.session_state["_clear_radio_form"] = True
+                st.rerun()
 
-        if b2.button("✅ REGISTRA COMUNICAZIONE", use_container_width=True, key="btn_registra_comunicazione"):
-            pos = [float(lat), float(lon)] if (save_coords and lat is not None and lon is not None) else None
-            st.session_state.brogliaccio.insert(
-                0,
-                {"ora": datetime.now().strftime("%H:%M"), "chi": chi, "sq": sq, "st": st_s,
-                 "mit": mit, "ris": ris, "op": st.session_state.op_name, "pos": pos, "foto": None}
-            )
-            prev_st = st.session_state.squadre.get(sq, {}).get("stato")
-            st.session_state.squadre[sq]["stato"] = st_s
-            if st_s == "Intervento concluso" and prev_st != "Intervento concluso":
-                st.session_state.cnt_conclusi = int(st.session_state.get("cnt_conclusi", 0) or 0) + 1
-            if pos:
-                st.session_state.pos_mappa = pos
-            save_data_to_disk()
-            st.session_state["_clear_radio_form"] = True
-            st.rerun()
-
-        st.markdown("</div>", unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_html=True)
 
     with r:
         # Avvisi e approvazioni: subito sopra la mappa
@@ -3911,15 +4307,92 @@ with t_rad:
             except Exception as _e:
                 st.error("Errore visualizzazione inbox (non blocca la mappa). Premi 🔄")
 
-            st.divider()
 
-        st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
+
         # =========================
+        # ⏳ Comunicazioni in attesa (coda risposte) – sopra la mappa
+        # =========================
+        queue = st.session_state.get("reply_queue", []) or []
+        if queue:
+            st.markdown(
+                f"""<div style="background:#fff3bf;border:1px solid #ffd43b;border-radius:14px;padding:10px 12px;margin:6px 0 10px 0;">
+                <div style="font-weight:900;color:#000;font-size:1.05rem;">⏳ Comunicazioni in attesa <span style="opacity:.75;">({len(queue)})</span></div>
+                <div style="color:#000;opacity:.75;font-size:.85rem;line-height:1.2;margin-top:2px;">Da gestire prima/dopo consulto. Qui puoi annotare e chiudere.</div>
+                </div>""",
+                unsafe_allow_html=True,
+            )
+
+            for _i, it in enumerate(queue):
+                _id = it.get("id", f"q{_i}")
+                caller_lbl = it.get("caller_label") or it.get("chi","")
+                answer_lbl = it.get("answerer_label") or (("SQUADRA " + str(it.get("sq","")).strip()) if str(it.get("chi","")).strip().upper().startswith("SALA") else "SALA OPERATIVA")
+                titolo = f"{it.get('ora','')} · {caller_lbl} → {answer_lbl}"
+
+                with st.expander(f"➕ 🟡 {titolo}", expanded=False):
+                    st.markdown(f"**Messaggio:** {it.get('mit','')}")
+                    st.caption(f"⏳ In attesa di risposta da: {answer_lbl}")
+                    if it.get("pos"):
+                        try:
+                            st.caption(f"📍 Coordinate salvate: {it['pos'][0]:.6f}, {it['pos'][1]:.6f}")
+                        except Exception:
+                            st.caption("📍 Coordinate salvate")
+
+                    k_reply = f"reply_text_{_id}"
+                    if k_reply not in st.session_state:
+                        st.session_state[k_reply] = it.get("reply", "")
+
+                    _att = (it.get("attesa_da") or ("SQUADRA" if str(it.get("chi","")).strip().upper().startswith("SALA") else "SALA")).strip().upper()
+                    _label = f"Risposta ({answer_lbl})"
+                    _ph = ("Annota qui la risposta ricevuta dalla squadra…" if _att == "SQUADRA" else "Scrivi qui la risposta della SALA da dare al caposquadra…")
+
+                    st.text_area(_label, key=k_reply, height=80, placeholder=_ph)
+
+                    c1, c2 = st.columns([1, 1])
+                    if c1.button("✅ Segna come risposto", key=f"btn_reply_done_{_id}", use_container_width=True):
+                        # sposta su brogliaccio come nota risposta (senza cambiare stato squadra)
+                        try:
+                            it["reply"] = st.session_state.get(k_reply, "")
+                        except Exception:
+                            pass
+                        # aggiorna brogliaccio: salva la risposta SULLA STESSA comunicazione (senza cambiare stato squadra)
+                        try:
+                            _reply_txt = (it.get("reply","") or "").strip()
+                            for _ev in st.session_state.brogliaccio:
+                                if _ev.get("id") == _id:
+                                    _ev["ris"] = _reply_txt
+                                    _ev["pending"] = False
+                                    _ev["ris_ora"] = datetime.now().strftime("%H:%M")
+                                    _ev["ris_da"] = (it.get("answerer_label") or (it.get("attesa_da") or "SALA")).upper()
+                                    break
+
+                            # Applica anche lo stato scelto durante la messa in attesa
+                            try:
+                                _new_st = (_ev.get("st") or it.get("st") or "").strip()
+                                _sq = it.get("sq")
+                                if _sq and _new_st:
+                                    prev_st = st.session_state.squadre.get(_sq, {}).get("stato")
+                                    st.session_state.squadre[_sq]["stato"] = _new_st
+                                    if _new_st == "Intervento concluso" and prev_st != "Intervento concluso":
+                                        st.session_state.cnt_conclusi = int(st.session_state.get("cnt_conclusi", 0) or 0) + 1
+                            except Exception:
+                                pass
+
+                        except Exception:
+                            pass
+
+        # rimuovi dalla coda
+                        st.session_state.reply_queue = [x for x in st.session_state.reply_queue if x.get("id") != _id]
+                        save_data_to_disk()
+                        st.rerun()
+
+                    if c2.button("🗑️ Rimuovi dalla coda", key=f"btn_reply_rm_{_id}", use_container_width=True):
+                        st.session_state.reply_queue = [x for x in st.session_state.reply_queue if x.get("id") != _id]
+                        save_data_to_disk()
+                        st.rerun()
+
         # MAPPA (ottimizzata)
         # =========================
-        show_map = st.toggle("🗺️ Mostra mappa", value=True, key="show_main_map")
-        fast_img = st.toggle("⚡ Mappa rapida (immagine)", value=False, key="fast_map_img")
-        st.caption("Suggerimento: se la mappa interattiva impiega molto (tiles), usa 'Mappa rapida (immagine)'.")
+        show_map = True  # mappa principale visibile
 
         if show_map:
             # per la dedup basta una slice dei primi eventi (newest->oldest)
@@ -3928,75 +4401,7 @@ with t_rad:
             squad_names = sorted(list(st.session_state.squadre.keys()))
 
             ultime_pos = _latest_positions_cached(events_slice, inbox_now, squad_names)
-            # =========================
-            # ⏳ Comunicazioni in attesa (coda risposte) – sopra la mappa
-            # =========================
-            queue = st.session_state.get("reply_queue", []) or []
-            if queue:
-                st.markdown(
-                    f"""<div style="background:#fff3bf;border:1px solid #ffd43b;border-radius:14px;padding:10px 12px;margin:6px 0 10px 0;">
-                    <div style="font-weight:900;color:#000;font-size:1.05rem;">⏳ Comunicazioni in attesa <span style="opacity:.75;">({len(queue)})</span></div>
-                    <div style="color:#000;opacity:.75;font-size:.85rem;line-height:1.2;margin-top:2px;">Da gestire prima/dopo consulto. Qui puoi annotare e chiudere.</div>
-                    </div>""",
-                    unsafe_allow_html=True,
-                )
-
-                for _i, it in enumerate(queue):
-                    _id = it.get("id", f"q{_i}")
-                    caller_lbl = it.get("caller_label") or it.get("chi","")
-                    answer_lbl = it.get("answerer_label") or (("SQUADRA " + str(it.get("sq","")).strip()) if str(it.get("chi","")).strip().upper().startswith("SALA") else "SALA OPERATIVA")
-                    titolo = f"{it.get('ora','')} · {caller_lbl} → {answer_lbl}"
-
-                    with st.expander(f"➕ 🟡 {titolo}", expanded=False):
-                        st.markdown(f"**Messaggio:** {it.get('mit','')}")
-                        st.caption(f"⏳ In attesa di risposta da: {answer_lbl}")
-                        if it.get("pos"):
-                            try:
-                                st.caption(f"📍 Coordinate salvate: {it['pos'][0]:.6f}, {it['pos'][1]:.6f}")
-                            except Exception:
-                                st.caption("📍 Coordinate salvate")
-
-                        k_reply = f"reply_text_{_id}"
-                        if k_reply not in st.session_state:
-                            st.session_state[k_reply] = it.get("reply", "")
-
-                        _att = (it.get("attesa_da") or ("SQUADRA" if str(it.get("chi","")).strip().upper().startswith("SALA") else "SALA")).strip().upper()
-                        _label = f"Risposta ({answer_lbl})"
-                        _ph = ("Annota qui la risposta ricevuta dalla squadra…" if _att == "SQUADRA" else "Scrivi qui la risposta della SALA da dare al caposquadra…")
-
-                        st.text_area(_label, key=k_reply, height=80, placeholder=_ph)
-
-                        c1, c2 = st.columns([1, 1])
-                        if c1.button("✅ Segna come risposto", key=f"btn_reply_done_{_id}", use_container_width=True):
-                            # sposta su brogliaccio come nota risposta (senza cambiare stato squadra)
-                            try:
-                                it["reply"] = st.session_state.get(k_reply, "")
-                            except Exception:
-                                pass
-                            # aggiorna brogliaccio: salva la risposta SULLA STESSA comunicazione (senza cambiare stato squadra)
-                            try:
-                                _reply_txt = (it.get("reply","") or "").strip()
-                                for _ev in st.session_state.brogliaccio:
-                                    if _ev.get("id") == _id:
-                                        _ev["ris"] = _reply_txt
-                                        _ev["pending"] = False
-                                        _ev["ris_ora"] = datetime.now().strftime("%H:%M")
-                                        _ev["ris_da"] = (it.get("answerer_label") or (it.get("attesa_da") or "SALA")).upper()
-                                        break
-                            except Exception:
-                                pass
-
-# rimuovi dalla coda
-                            st.session_state.reply_queue = [x for x in st.session_state.reply_queue if x.get("id") != _id]
-                            save_data_to_disk()
-                            st.rerun()
-
-                        if c2.button("🗑️ Rimuovi dalla coda", key=f"btn_reply_rm_{_id}", use_container_width=True):
-                            st.session_state.reply_queue = [x for x in st.session_state.reply_queue if x.get("id") != _id]
-                            save_data_to_disk()
-                            st.rerun()
-
-
+            fast_img = False  # toggle rimosso: usa sempre mappa interattiva
             if fast_img:
                 pts = []
                 for sq, info in (ultime_pos or {}).items():
@@ -4026,8 +4431,6 @@ with t_rad:
                     zoom=14,
                 )
                 st_folium(m, width=1100, height=450, returned_objects=[], key="map_main")
-        else:
-            st.info("Mappa nascosta (velocizza i rerun).")
         # =========================
         # NATO – Convertitore (solo sala radio)
         # =========================
@@ -4148,7 +4551,7 @@ with t_rad:
         st.markdown("</div>", unsafe_allow_html=True)
 
 with t_rep:
-    st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
+    st.markdown("<div class=''>", unsafe_allow_html=True)
     st.subheader("📊 Report per Squadra")
 
     df = pd.DataFrame(st.session_state.brogliaccio)
@@ -4165,7 +4568,6 @@ with t_rep:
         })
     st.dataframe(pd.DataFrame(rubrica), use_container_width=True, height=220)
 
-    st.divider()
     if df.empty:
         st.info("Nessun dato nel brogliaccio.")
         df_f = pd.DataFrame()
@@ -4175,7 +4577,6 @@ with t_rep:
         df_view = df_for_report(df_f)
         st.dataframe(df_view, use_container_width=True, height=360)
 
-        st.divider()
         csv = df_f.to_csv(index=False).encode("utf-8")
         st.download_button("⬇️ Scarica CSV filtrato", data=csv, file_name="brogliaccio.csv", mime="text/csv")
 
@@ -4183,10 +4584,8 @@ with t_rep:
     # - squadra
     # - stampa con/senza mappa
     # - mappa: ultime posizioni / tutti eventi / percorso
-    st.divider()
     st.subheader("🖨️ Report HTML (stampa con/senza mappa + selettore mappa eventi squadra)")
 
-    
     # Tipo mappa per report (valido anche per mappa dentro HTML)
     if "map_style" not in st.session_state:
         st.session_state.map_style = "Topografica"
@@ -4208,7 +4607,6 @@ with t_rep:
         "include_map": bool(rep_with_map),
     }
 
-
     # --- Filtro squadra (report) ---
     _sq_opts = sorted(list((st.session_state.squadre or {}).keys()))
     if "_rep_sq_filter" not in st.session_state:
@@ -4222,7 +4620,6 @@ with t_rep:
     )
     _use_all = ("Tutte" in _rep_sq) or (len(_rep_sq) == 0)
     _rep_sq_set = set(_sq_opts) if _use_all else set([x for x in _rep_sq if x != "Tutte"])
-
 
     # Cache report per velocizzare (foto escluse)
     _rep_brog = []
@@ -4254,7 +4651,6 @@ with t_rep:
         mime="text/html",
     )
 
-    st.divider()
     st.markdown("#### ✏️ Modifica evento (correzione rapida)")
     _maxi = max(len(st.session_state.brogliaccio) - 1, 0)
     _idx_edit = st.number_input("Indice evento (#) da modificare", min_value=0, max_value=_maxi, value=0, step=1, key="rep_edit_idx")
@@ -4262,13 +4658,11 @@ with t_rep:
         st.session_state.edit_event_idx = int(_idx_edit)
         st.rerun()
 
-
     st.caption("Apri l'HTML → scegli squadra → scegli modalità mappa (Ultime/Tutti/Percorso) → STAMPA con/senza mappa.")
     st.markdown("</div>", unsafe_allow_html=True)
 
 # =========================
 # REGISTRO EVENTI + MAPPA (FAST)
-# =========================
 # =========================
 # MODIFICA EVENTO (correzione rapida)
 # =========================
@@ -4330,8 +4724,8 @@ view_mode = st.selectbox("Vista registro:", ["Classica", "Veloce"], index=0, key
 mode_fast = (view_mode == "Veloce")
 
 # Limite eventi caricati (evita rallentamenti con migliaia di righe)
-_lim_opts = [100, 250, 500, 1000, "Tutti"]
-_lim = st.selectbox("Carica eventi:", _lim_opts, index=1, key="log_limit")
+_lim_opts = [25, 50, 100, 150, "Tutti"]
+_lim = st.selectbox("Mostra ultimi:", _lim_opts, index=1, key="log_limit")
 all_events = st.session_state.brogliaccio
 events_loaded = all_events if _lim == "Tutti" else all_events[:int(_lim)]
 
@@ -4348,50 +4742,9 @@ if _reg_sq != "Tutte":
     events_loaded = [e for e in events_loaded if isinstance(e, dict) and e.get("sq") == _reg_sq]
     st.caption(f"Filtro attivo: **{_reg_sq}** — eventi mostrati: **{len(events_loaded)}**.")
 
-
 if _lim != "Tutti" and len(all_events) > int(_lim):
-    st.caption(f"Caricati i primi **{int(_lim)}** eventi su **{len(all_events)}** totali (per velocità).")
+    st.caption(f"Mostrati gli ultimi **{int(_lim)}** eventi su **{len(all_events)}** totali (per velocità).")
 
-# Mappa evento selezionato (una alla volta)
-if st.session_state.open_map_event is not None:
-    idx = st.session_state.open_map_event
-    if 0 <= idx < len(all_events):
-        row = all_events[idx]
-        pos = row.get("pos")
-
-        st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
-        st.subheader("🗺️ Mappa evento selezionato")
-
-        if isinstance(pos, list) and len(pos) == 2:
-            fast_ev = st.toggle("⚡ Mappa rapida evento (immagine)", value=False, key="fast_event_map_img")
-            if fast_ev:
-                try:
-                    pts = [(float(pos[0]), float(pos[1]), f"{row.get('sq','')} · {row.get('st','')}")]
-                except Exception:
-                    pts = []
-                ck = _hash_obj({"ev": idx, "p": pts})
-                png = _static_map_png_cached(ck, pts, zoom=15)
-                if png:
-                    st.image(png, use_container_width=True)
-                else:
-                    st.info("Per la mappa rapida serve 'staticmap' in requirements.txt. Disattiva il toggle per la mappa interattiva.")
-            else:
-                m_ev = folium.Map(location=pos, zoom_start=15, tiles=None, prefer_canvas=True)
-                _folium_apply_base_layer(m_ev)
-                folium.Marker(
-                    pos,
-                    tooltip=f"{row.get('sq','')} · {row.get('st','')}",
-                    icon=folium.Icon(color=COLORI_STATI.get(row.get('st',''), {}).get('color', 'blue')),
-                ).add_to(m_ev)
-                st_folium(m_ev, width="100%", height=420, returned_objects=[], key="map_event")
-        else:
-            st.info("Evento senza coordinate GPS (OMISSIS).")
-
-        if st.button("❌ CHIUDI MAPPA", key="close_event_map"):
-            st.session_state.open_map_event = None
-            st.rerun()
-
-        st.markdown("</div>", unsafe_allow_html=True)
 
 # -------- Modalità veloce (tabella + dettaglio) --------
 if mode_fast:
@@ -4477,13 +4830,36 @@ if mode_fast:
                 if col_a.button("✏️ MODIFICA", key=f"edit_ev_pick_{int(pick)}"):
                     st.session_state.edit_event_idx = int(pick)
                     st.rerun()
+
                 if gps_ok:
-                    if col_b.button("🗺️ MAPPA", key=f"open_map_pick_{int(pick)}"):
-                        st.session_state.open_map_event = int(pick)
-                        st.rerun()
-                    col_c.caption("Apre una mappa dedicata in alto al registro (una alla volta).")
+                    show_map = col_b.toggle("🗺️ MAPPA", value=False, key=f"show_map_pick_{int(pick)}")
+                    col_c.caption("Mappa compatta dentro la scheda (non occupa spazio in alto).")
+
+                    if show_map:
+                        pos = b.get("pos")
+                        if isinstance(pos, list) and len(pos) == 2:
+                            # Mappa rapida (immagine) — sempre attiva
+                            try:
+                                pts = [(float(pos[0]), float(pos[1]), f"{b.get('sq','')} · {b.get('st','')}")]
+                            except Exception:
+                                pts = []
+                            ck = _hash_obj({"ev": int(pick), "p": pts, "mode": "pick"})
+                            png = _static_map_png_cached(ck, pts, zoom=15)
+                            if png:
+                                st.image(png, use_container_width=True)
+                            else:
+                                m_ev = folium.Map(location=pos, zoom_start=15, tiles=None, prefer_canvas=True)
+                                _folium_apply_base_layer(m_ev)
+                                folium.Marker(
+                                    pos,
+                                    tooltip=f"{b.get('sq','')} · {b.get('st','')}",
+                                    icon=folium.Icon(color=COLORI_STATI.get(b.get('st',''), {}).get('color', 'blue')),
+                                ).add_to(m_ev)
+                                st_folium(m_ev, width="100%", height=260, returned_objects=[], key=f"map_event_pick_{int(pick)}")
+                        else:
+                            st.info("Evento senza coordinate GPS (OMISSIS).")
                 else:
-                    col_b.button("🗺️ N/D", key=f"no_map_pick_{int(pick)}", disabled=True)
+                    col_b.toggle("🗺️ N/D", value=False, key=f"no_map_pick_{int(pick)}", disabled=True)
                     col_c.caption("Coordinate non presenti (OMISSIS).")
 
 # -------- Modalità classica (expander per evento) --------
@@ -4514,20 +4890,41 @@ else:
             if col_a.button("✏️ MODIFICA", key=f"edit_ev_{i}"):
                 st.session_state.edit_event_idx = int(i)
                 st.rerun()
-            if gps_ok:
-                if col_b.button("🗺️ MAPPA", key=f"open_map_{i}"):
-                    st.session_state.open_map_event = i
-                    st.rerun()
-                col_c.caption("Apre una mappa dedicata in alto al registro (una alla volta).")
-            else:
-                col_b.button("🗺️ N/D", key=f"no_map_{i}", disabled=True)
-                col_c.caption("Coordinate non presenti (OMISSIS).")
 
+            if gps_ok:
+                show_map = col_b.toggle("🗺️ MAPPA", value=False, key=f"show_map_{i}")
+                col_c.caption("Mappa compatta dentro la scheda (non occupa spazio in alto).")
+
+                if show_map:
+                    pos = b.get("pos")
+                    if isinstance(pos, list) and len(pos) == 2:
+                        # Mappa rapida (immagine) — sempre attiva
+                        try:
+                            pts = [(float(pos[0]), float(pos[1]), f"{b.get('sq','')} · {b.get('st','')}")]
+                        except Exception:
+                            pts = []
+                        ck = _hash_obj({"ev": i, "p": pts, "mode": "classic"})
+                        png = _static_map_png_cached(ck, pts, zoom=15)
+                        if png:
+                            st.image(png, use_container_width=True)
+                        else:
+                            m_ev = folium.Map(location=pos, zoom_start=15, tiles=None, prefer_canvas=True)
+                            _folium_apply_base_layer(m_ev)
+                            folium.Marker(
+                                pos,
+                                tooltip=f"{b.get('sq','')} · {b.get('st','')}",
+                                icon=folium.Icon(color=COLORI_STATI.get(b.get('st',''), {}).get('color', 'blue')),
+                            ).add_to(m_ev)
+                            st_folium(m_ev, width="100%", height=260, returned_objects=[], key=f"map_event_{i}")
+                    else:
+                        st.info("Evento senza coordinate GPS (OMISSIS).")
+            else:
+                col_b.toggle("🗺️ N/D", value=False, key=f"no_map_{i}", disabled=True)
+                col_c.caption("Coordinate non presenti (OMISSIS).")
 
 # =========================
 # RESET
 # =========================
-st.divider()
 st.subheader("💾 Gestione Memoria Dati")
 col_m1, col_m2 = st.columns(2)
 
@@ -4568,8 +4965,6 @@ def _cached_report_bytes(payload_json: str, meta_json: str) -> bytes:
         meta=meta,
     )
 
-
-
 # =========================
 # FOOTER
 # =========================
@@ -4581,7 +4976,6 @@ background:#0d1b2a;color:#ffffffcc;text-align:center;padding:6px 0;font-size:.75
 </style>
 <div class="pc-footer"><b>Protezione Civile Thiene</b> · Powered by <b>JokArt</b></div>
 """, unsafe_allow_html=True)
-
 
 # =========================
 # FOOTER
